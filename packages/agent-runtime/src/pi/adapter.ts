@@ -604,9 +604,10 @@ function buildPiConfig(
 ): Record<string, unknown> | undefined {
   const config: Record<string, unknown> = {};
   if (threadId) config["shell_environment_policy.set.BB_THREAD_ID"] = threadId;
-  const shellEnvironmentConfig = buildShellEnvironmentPolicyConfig(
-    options?.envVars,
-  );
+  const shellEnvironmentConfig = buildShellEnvironmentPolicyConfig({
+    ...(options?.envVars ? { envVars: options.envVars } : {}),
+    ...(options?.envUnset ? { unsetVars: options.envUnset } : {}),
+  });
   if (shellEnvironmentConfig) {
     Object.assign(config, shellEnvironmentConfig);
   }

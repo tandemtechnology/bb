@@ -123,6 +123,40 @@ signal it, so a stale file left by a crash cannot stop an unrelated process.
 | `BB_HOST_DAEMON_PORT` | `bb-app env`, environment, or `--host-daemon-port` | Startup-only            | Local host-daemon API port. Defaults to `38887`. A full launcher or desktop app restart is required after a persistent set or unset.                                                                                                    |
 | `BB_LOG_LEVEL`        | `bb-app config`                                    | Startup-only debugging  | Log level: `trace`, `debug`, `info`, `warn`, `error`, or `fatal`. A full launcher or desktop app restart is required.                                                                                                                   |
 | `OPENAI_API_KEY`      | `bb-app env`                                       | OpenAI opt-in routes    | Required only when selecting explicit OpenAI provider routes such as `openai/gpt-4o-mini` or `openai/gpt-transcribe`.                                                                                                                   |
+| `BB_CLAUDE_FABLE_CONFIG_DIR` | host daemon environment                            | Fable models on a non-default path | `CLAUDE_CONFIG_DIR` used for Claude Code threads running a Fable model. Defaults to `~/.claude-fable` on the machine running the host daemon. See [Claude account binding](#claude-account-binding). |
+
+### Claude account binding
+
+Fable models are entitled only on an Anthropic 1P Console org, never through
+Vertex or Bedrock, and that org is BAA-covered but **not** zero-data-retention.
+Running everyday work there would place it under a non-ZDR agreement, so bb runs
+Fable threads under a separate Claude Code account and leaves every other model
+on the default one.
+
+Selecting the model selects the account; there is no separate account switch.
+When a thread's model is a Fable model, the host daemon:
+
+- points `CLAUDE_CONFIG_DIR` at the Fable config directory, giving that account
+  its own credentials, MCP servers, and history;
+- removes `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_USE_VERTEX`,
+  `CLAUDE_CODE_USE_BEDROCK`, `CLOUD_ML_REGION`, and
+  `ANTHROPIC_VERTEX_PROJECT_ID` from the session environment, because each of
+  these outranks an OAuth login and would otherwise silently shadow it — the
+  daemon inherits whatever shell started it, which in a dev container commonly
+  exports the Vertex trio;
+- sets `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1`, since a non-ZDR
+  HIPAA-regulated org rejects the `context_management` beta.
+
+Log in to that account once on the host with
+`CLAUDE_CONFIG_DIR=~/.claude-fable claude` followed by `/login`. A Fable thread
+started before that login will prompt for authentication rather than fall back
+to the default account.
+
+The moving `best` alias is deliberately **not** bound to the Fable account. It
+resolves to Fable only where the account is already entitled, so bb cannot know
+statically what it means. Binding it would risk silently running ordinary work
+on the non-ZDR org, whereas leaving it on the default account fails visibly on
+entitlement instead. Select Fable by name to get the Fable account.
 
 By default, helper inference and voice transcription use Codex credentials from
 the host daemon. Run `codex login` on the host for the default path. Set

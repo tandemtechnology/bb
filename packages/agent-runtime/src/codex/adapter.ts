@@ -761,9 +761,10 @@ function buildCodexConfig(
   if (args.threadId) {
     config["shell_environment_policy.set.BB_THREAD_ID"] = args.threadId;
   }
-  const shellEnvironmentConfig = buildShellEnvironmentPolicyConfig(
-    args.options?.envVars,
-  );
+  const shellEnvironmentConfig = buildShellEnvironmentPolicyConfig({
+    ...(args.options?.envVars ? { envVars: args.options.envVars } : {}),
+    ...(args.options?.envUnset ? { unsetVars: args.options.envUnset } : {}),
+  });
   if (shellEnvironmentConfig) {
     Object.assign(config, shellEnvironmentConfig);
   }

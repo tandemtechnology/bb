@@ -124,6 +124,12 @@ export type ProviderExecutionContext = {
   providerSubagentsEnabled?: boolean;
   instructions?: string;
   envVars?: Record<string, string>;
+  /**
+   * Variables to remove from the provider process environment. Omission means
+   * "inherit everything"; an empty array is not meaningful, so callers that have
+   * nothing to remove leave this undefined.
+   */
+  envUnset?: readonly string[];
   skillRoots?: readonly AgentRuntimeSkillRoot[];
 } & RuntimePermissionPolicy;
 

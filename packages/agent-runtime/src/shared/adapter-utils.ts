@@ -256,19 +256,39 @@ export function withParentToolCallId<TItem extends ThreadEventItem>(
   };
 }
 
-export function buildShellEnvironmentPolicyConfig(
-  envVars?: Record<string, string>,
-): Record<string, string> | undefined {
-  if (!envVars) {
-    return undefined;
-  }
+export const SHELL_ENV_POLICY_SET_PREFIX = "shell_environment_policy.set.";
+export const SHELL_ENV_POLICY_UNSET_PREFIX = "shell_environment_policy.unset.";
 
+export interface ShellEnvironmentPolicyArgs {
+  envVars?: Record<string, string>;
+  /**
+   * Variables to remove from the inherited environment. Setting a variable to
+   * the empty string is not equivalent: Claude Code treats a present-but-empty
+   * credential var as configured, so it would still shadow an OAuth login.
+   */
+  unsetVars?: readonly string[];
+}
+
+export function buildShellEnvironmentPolicyConfig(
+  args: ShellEnvironmentPolicyArgs,
+): Record<string, string> | undefined {
   const config: Record<string, string> = {};
-  for (const [key, value] of Object.entries(envVars)) {
+
+  for (const [key, value] of Object.entries(args.envVars ?? {})) {
     if (!shellEnvironmentVariableKeySchema.safeParse(key).success) {
       continue;
     }
-    config[`shell_environment_policy.set.${key}`] = value;
+    config[`${SHELL_ENV_POLICY_SET_PREFIX}${key}`] = value;
+  }
+
+  for (const key of args.unsetVars ?? []) {
+    if (!shellEnvironmentVariableKeySchema.safeParse(key).success) {
+      continue;
+    }
+    // Unset wins over set for the same key, so a policy can't both provide and
+    // remove a credential var and leave the outcome to object key ordering.
+    delete config[`${SHELL_ENV_POLICY_SET_PREFIX}${key}`];
+    config[`${SHELL_ENV_POLICY_UNSET_PREFIX}${key}`] = "1";
   }
 
   return Object.keys(config).length > 0 ? config : undefined;

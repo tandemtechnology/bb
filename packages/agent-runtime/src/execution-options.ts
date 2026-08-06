@@ -5,7 +5,13 @@ import type {
 } from "./types.js";
 import type { ProviderExecutionContext } from "./provider-adapter.js";
 import { DEFAULT_CLAUDE_CODE_MOCK_CLI_TRAFFIC_CONFIG } from "@bb/domain";
+import { homedir } from "node:os";
 import { resolveAdapterPermissionPolicy } from "./shared/permission-policy.js";
+import {
+  FABLE_CONFIG_DIR_ENV_VAR,
+  isFableModel,
+  resolveClaudeAccountEnv,
+} from "./claude-code/account-binding.js";
 
 interface AssertProviderSupportsExecutionOptionsArgs {
   adapter: ProviderAdapter;
@@ -90,6 +96,18 @@ export function toProviderExecutionContext(
   args: ToProviderExecutionContextArgs,
 ): ProviderExecutionContext {
   const permissionPolicy = resolveAdapterPermissionPolicy(args.execOpts);
+  const accountEnv = resolveClaudeAccountEnv({
+    env: process.env,
+    homeDir: homedir(),
+    model: args.execOpts.model,
+  });
+  if (accountEnv === undefined && isFableModel(args.execOpts.model)) {
+    // Falling back to the default account would run a Fable session against the
+    // wrong Anthropic org, so refuse instead. See account-binding.ts.
+    throw new Error(
+      `Model "${args.execOpts.model}" requires a dedicated Claude account, but its config directory could not be resolved. Set ${FABLE_CONFIG_DIR_ENV_VAR} on the host daemon.`,
+    );
+  }
   return {
     model: args.execOpts.model,
     serviceTier: args.execOpts.serviceTier,
@@ -105,7 +123,10 @@ export function toProviderExecutionContext(
     providerSubagentsEnabled: args.execOpts.providerSubagentsEnabled,
     ...permissionPolicy,
     instructions: args.instructions,
-    envVars: args.envVars,
+    // The account binding wins over caller-supplied vars: it is a compliance
+    // boundary, not a default.
+    envVars: { ...args.envVars, ...(accountEnv?.set ?? {}) },
+    ...(accountEnv ? { envUnset: accountEnv.unset } : {}),
     ...(args.skillRoots && args.skillRoots.length > 0
       ? { skillRoots: args.skillRoots }
       : {}),

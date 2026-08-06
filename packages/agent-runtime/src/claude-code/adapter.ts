@@ -773,9 +773,12 @@ function translateClaudeToolResultItem(
 // ---------------------------------------------------------------------------
 
 function buildClaudeCodeConfig(
-  envVars?: Record<string, string>,
+  options: ProviderExecutionContext | undefined,
 ): Record<string, unknown> | undefined {
-  const config = buildShellEnvironmentPolicyConfig(envVars);
+  const config = buildShellEnvironmentPolicyConfig({
+    ...(options?.envVars ? { envVars: options.envVars } : {}),
+    ...(options?.envUnset ? { unsetVars: options.envUnset } : {}),
+  });
   return config ? { ...config } : undefined;
 }
 
@@ -1064,7 +1067,7 @@ export function createClaudeCodeProviderAdapter(
               command.options.model,
             );
           }
-          const config = buildClaudeCodeConfig(command.options?.envVars);
+          const config = buildClaudeCodeConfig(command.options);
           const dynamicTools = command.dynamicTools?.map((t) => ({
             name: t.name,
             description: t.description,
@@ -1131,7 +1134,7 @@ export function createClaudeCodeProviderAdapter(
               command.options.model,
             );
           }
-          const resumeConfig = buildClaudeCodeConfig(command.options?.envVars);
+          const resumeConfig = buildClaudeCodeConfig(command.options);
           const dynamicTools = command.dynamicTools?.map((t) => ({
             name: t.name,
             description: t.description,
@@ -1249,7 +1252,7 @@ export function createClaudeCodeProviderAdapter(
               command.options.model,
             );
           }
-          const forkConfig = buildClaudeCodeConfig(command.options?.envVars);
+          const forkConfig = buildClaudeCodeConfig(command.options);
           const dynamicTools = command.dynamicTools?.map((t) => ({
             name: t.name,
             description: t.description,

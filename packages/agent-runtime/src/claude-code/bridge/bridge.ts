@@ -39,6 +39,10 @@ import {
   type BridgeToolCallRequest,
 } from "../../shared/bridge-tool-calls.js";
 import { withoutBridgeRuntimeEnv } from "../../shared/bridge-runtime-env.js";
+import {
+  SHELL_ENV_POLICY_SET_PREFIX,
+  SHELL_ENV_POLICY_UNSET_PREFIX,
+} from "../../shared/adapter-utils.js";
 import { shouldAutoDenyInteractiveRequest } from "../../shared/permission-policy.js";
 import { SdkSession, type SdkSessionOptions } from "./sdk-session.js";
 import { listClaudeCodeBridgeModels } from "./model-list.js";
@@ -765,22 +769,31 @@ async function closeThreadSessionsGracefully(message: string): Promise<void> {
   );
 }
 
+interface EnvPolicy {
+  set: Record<string, string>;
+  unset: readonly string[];
+}
+
 function extractEnvOverrides(
   config: Record<string, unknown> | undefined,
-): Record<string, string> {
-  const envOverrides: Record<string, string> = {};
+): EnvPolicy {
+  const set: Record<string, string> = {};
+  const unset: string[] = [];
   if (config) {
     for (const [key, value] of Object.entries(config)) {
       if (
-        key.startsWith("shell_environment_policy.set.") &&
+        key.startsWith(SHELL_ENV_POLICY_SET_PREFIX) &&
         typeof value === "string"
       ) {
-        const envVar = key.slice("shell_environment_policy.set.".length);
-        envOverrides[envVar] = value;
+        set[key.slice(SHELL_ENV_POLICY_SET_PREFIX.length)] = value;
+        continue;
+      }
+      if (key.startsWith(SHELL_ENV_POLICY_UNSET_PREFIX)) {
+        unset.push(key.slice(SHELL_ENV_POLICY_UNSET_PREFIX.length));
       }
     }
   }
-  return envOverrides;
+  return { set, unset };
 }
 
 /**
@@ -798,14 +811,18 @@ function extractEnvOverrides(
  *   segment, matching the CLI. The delete also clears any value inherited from a
  *   parent SDK process.
  */
-function buildSessionEnv(
-  envOverrides: Record<string, string>,
-): NodeJS.ProcessEnv {
+function buildSessionEnv(envPolicy: EnvPolicy): NodeJS.ProcessEnv {
   const sessionEnv: NodeJS.ProcessEnv = {
     ...withoutBridgeRuntimeEnv(process.env),
-    ...envOverrides,
+    ...envPolicy.set,
     CLAUDE_CODE_ENTRYPOINT: "cli",
   };
+  // Applied after the spread so an inherited value cannot survive: the daemon
+  // inherits the shell that launched it, which may carry credentials that
+  // outrank the account this session is pinned to.
+  for (const key of envPolicy.unset) {
+    delete sessionEnv[key];
+  }
   delete sessionEnv.CLAUDE_AGENT_SDK_CLIENT_APP;
   return sessionEnv;
 }
@@ -825,10 +842,10 @@ function appendNoProxyLoopback(value: string | undefined): string {
 async function prepareSessionEnv(
   params: PrepareSessionEnvParams,
 ): Promise<PreparedSessionEnv> {
-  const envOverrides = extractEnvOverrides(params.config);
+  const envPolicy = extractEnvOverrides(params.config);
   if (!params.claudeCodeMockCliTraffic.enabled) {
     return {
-      env: buildSessionEnv(envOverrides),
+      env: buildSessionEnv(envPolicy),
       mockCliTrafficProxy: null,
     };
   }
@@ -839,14 +856,19 @@ async function prepareSessionEnv(
   });
   return {
     env: buildSessionEnv({
-      ...envOverrides,
-      ANTHROPIC_BASE_URL: mockCliTrafficProxy.baseUrl,
-      NO_PROXY: appendNoProxyLoopback(
-        envOverrides.NO_PROXY ?? process.env.NO_PROXY,
-      ),
-      no_proxy: appendNoProxyLoopback(
-        envOverrides.no_proxy ?? process.env.no_proxy,
-      ),
+      set: {
+        ...envPolicy.set,
+        ANTHROPIC_BASE_URL: mockCliTrafficProxy.baseUrl,
+        NO_PROXY: appendNoProxyLoopback(
+          envPolicy.set.NO_PROXY ?? process.env.NO_PROXY,
+        ),
+        no_proxy: appendNoProxyLoopback(
+          envPolicy.set.no_proxy ?? process.env.no_proxy,
+        ),
+      },
+      // The proxy rewrites the API endpoint but must not resurrect credential
+      // vars the account binding removed.
+      unset: envPolicy.unset,
     }),
     mockCliTrafficProxy,
   };
