@@ -147,6 +147,27 @@ export const projectExecutionDefaults = sqliteTable(
   ],
 );
 
+export const projectEnvVars = sqliteTable(
+  "project_env_vars",
+  {
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    key: text("key").notNull(),
+    // Null exactly when `secret` is set: the value then lives in a 0600 file
+    // under the data directory instead of the database.
+    value: text("value"),
+    secret: integer("secret", { mode: "boolean" }).notNull().default(false),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("project_env_vars_project_key_idx").on(
+      table.projectId,
+      table.key,
+    ),
+  ],
+);
+
 export const systemExperiments = sqliteTable("system_experiments", {
   id: text("id").primaryKey(),
   claudeCodeMockCliTraffic: integer("claude_code_mock_cli_traffic", {

@@ -63,6 +63,18 @@ export type {
 } from "./project-execution-defaults.js";
 
 export {
+  deleteProjectEnvVar,
+  getProjectEnvVar,
+  listProjectEnvVars,
+  upsertProjectEnvVar,
+} from "./project-env-vars.js";
+export type {
+  DeleteProjectEnvVarArgs,
+  ListProjectEnvVarsArgs,
+  UpsertProjectEnvVarArgs,
+} from "./project-env-vars.js";
+
+export {
   createProjectSource,
   countProjectSources,
   getProjectSourceForProject,

@@ -1039,12 +1039,13 @@ describe("host-daemon local schemas", () => {
 });
 
 describe("host-daemon command schemas", () => {
-  // Version 89 makes the ACP adapter mint turn-qualified fileChange item ids.
-  // An enrolled daemon on an older build still emits session-scoped counters
-  // that collide across resumed sessions, so it must update before it reports
-  // more file edits.
-  it("uses protocol version 89 for turn-qualified ACP fileChange item ids", () => {
-    expect(HOST_DAEMON_PROTOCOL_VERSION).toBe(89);
+  // Version 90 adds the required `projectEnvVars` field to every thread runtime
+  // context, on top of upstream's 89 (turn-qualified ACP fileChange item ids). A
+  // daemon on 89 rejects those commands as invalid-message and would
+  // reconnect-loop rather than run threads, so the bump is what moves an
+  // enrolled machine onto a build that understands the field.
+  it("uses protocol version 90 for project environment variables", () => {
+    expect(HOST_DAEMON_PROTOCOL_VERSION).toBe(90);
   });
 
   it("binds Plan cancellation to a required turn id and typed result", () => {
@@ -1731,6 +1732,7 @@ describe("host-daemon command schemas", () => {
         instructions: "Be concise.",
         dynamicTools: [],
         injectedSkillSources: [],
+        projectEnvVars: {},
         instructionMode: "append",
         requestId: CLIENT_REQUEST_ID,
         input: [{ type: "text", text: "hello", mentions: [] }],
@@ -1764,6 +1766,7 @@ describe("host-daemon command schemas", () => {
           instructions: "Be concise.",
           dynamicTools: [],
           injectedSkillSources: [],
+          projectEnvVars: {},
           instructionMode: "append",
         },
         target: { mode: "start" },
@@ -1820,6 +1823,7 @@ describe("host-daemon command schemas", () => {
           },
         ],
         injectedSkillSources: [],
+        projectEnvVars: {},
         instructionMode: "replace",
       }),
     ).toMatchObject({
@@ -1883,6 +1887,7 @@ describe("host-daemon command schemas", () => {
         instructions: "Be concise.",
         dynamicTools: [],
         injectedSkillSources: [],
+        projectEnvVars: {},
         instructionMode: "append" as const,
       };
 
@@ -1943,6 +1948,7 @@ describe("host-daemon command schemas", () => {
           instructions: "Be a helpful coding agent.",
           dynamicTools: [],
           injectedSkillSources: [],
+          projectEnvVars: {},
           instructionMode: "append",
         },
         target: { mode: "start" },
@@ -1992,6 +1998,7 @@ describe("host-daemon command schemas", () => {
       instructions: "Be a helpful thread.",
       dynamicTools: [],
       injectedSkillSources: [],
+      projectEnvVars: {},
       instructionMode: "replace",
     };
 
@@ -2034,6 +2041,7 @@ describe("host-daemon command schemas", () => {
         instructions: "Be a helpful coding agent.",
         dynamicTools: [],
         injectedSkillSources: [],
+        projectEnvVars: {},
         instructionMode: "append",
       },
       target: { mode: "start" },
@@ -2095,6 +2103,7 @@ describe("host-daemon command schemas", () => {
       instructions: "Be a helpful thread.",
       dynamicTools: [],
       injectedSkillSources: [],
+      projectEnvVars: {},
       instructionMode: "append",
     };
     const threadStartRoundTrip = JSON.parse(JSON.stringify(threadStartCommand));
@@ -2132,6 +2141,7 @@ describe("host-daemon command schemas", () => {
         instructions: "Be a helpful thread.",
         dynamicTools: [],
         injectedSkillSources: [],
+        projectEnvVars: {},
         instructionMode: "append",
       },
       target: { mode: "start" },
@@ -2242,6 +2252,7 @@ describe("host-daemon command schemas", () => {
           instructions: "Be a helpful coding agent.",
           dynamicTools: [],
           injectedSkillSources: [],
+          projectEnvVars: {},
           instructionMode: "append",
         },
         target: { mode: "start" },
@@ -2286,6 +2297,7 @@ describe("host-daemon command schemas", () => {
           instructions: "Be a helpful coding agent.",
           dynamicTools: [],
           injectedSkillSources: [],
+          projectEnvVars: {},
           instructionMode: "append",
         },
         target: { mode: "auto", expectedTurnId: "turn_123" },
@@ -2383,6 +2395,7 @@ describe("host-daemon command schemas", () => {
         instructions: "Be concise.",
         dynamicTools: [],
         injectedSkillSources: [],
+        projectEnvVars: {},
         instructionMode: "append",
       }),
     ).toThrow();
@@ -2416,6 +2429,7 @@ describe("host-daemon command schemas", () => {
           instructions: "Be a helpful coding agent.",
           dynamicTools: [],
           injectedSkillSources: [],
+          projectEnvVars: {},
           instructionMode: "append",
         },
         target: { mode: "start" },

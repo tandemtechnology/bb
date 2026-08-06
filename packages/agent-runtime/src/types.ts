@@ -152,6 +152,12 @@ export interface StartThreadArgs {
   input?: PromptInput[];
   inputGroups?: PromptInput[][];
   options: AgentRuntimeExecutionOptions;
+  /**
+   * Project-scoped environment for this session, already resolved server-side.
+   * Merged over the daemon's own shell environment. May contain secret values,
+   * so it must not be logged.
+   */
+  projectEnvVars?: Record<string, string>;
   instructions?: string;
   dynamicTools?: DynamicTool[];
   disallowedTools?: readonly string[];
@@ -177,6 +183,8 @@ export interface ResumeThreadArgs {
   environmentId: string;
   threadId: string;
   projectId?: string;
+  /** See {@link StartThreadArgs.projectEnvVars}. */
+  projectEnvVars?: Record<string, string>;
   providerThreadId?: string;
   providerId: string;
   options: AgentRuntimeExecutionOptions;

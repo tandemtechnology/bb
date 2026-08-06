@@ -22,7 +22,12 @@ import type {
   WorkspaceFileListResponse,
 } from "@bb/server-contract";
 import { uploadedPromptAttachmentSchema } from "@bb/server-contract";
-import type { ProjectExecutionDefaults, ProjectSource } from "@bb/domain";
+import type {
+  ProjectEnvVar,
+  ProjectEnvVarList,
+  ProjectExecutionDefaults,
+  ProjectSource,
+} from "@bb/domain";
 import { signalRequestArgs, type CreateSdkAreaArgs } from "./common.js";
 
 export interface ProjectListArgs {
@@ -192,6 +197,32 @@ export interface ProjectSourcesArea {
   update(args: ProjectSourceUpdateArgs): Promise<ProjectSourceUpdateResult>;
 }
 
+export interface ProjectEnvListArgs {
+  projectId: string;
+}
+export type ProjectEnvListResult = ProjectEnvVarList;
+
+export interface ProjectEnvSetArgs {
+  projectId: string;
+  key: string;
+  value: string;
+  /** Store in a secret file and redact from every read path. */
+  secret: boolean;
+}
+export type ProjectEnvSetResult = ProjectEnvVar;
+
+export interface ProjectEnvUnsetArgs {
+  projectId: string;
+  key: string;
+}
+export type ProjectEnvUnsetResult = { ok: true };
+
+export interface ProjectEnvArea {
+  list(args: ProjectEnvListArgs): Promise<ProjectEnvListResult>;
+  set(args: ProjectEnvSetArgs): Promise<ProjectEnvSetResult>;
+  unset(args: ProjectEnvUnsetArgs): Promise<ProjectEnvUnsetResult>;
+}
+
 export interface ProjectAttachmentsArea {
   copy(args: ProjectAttachmentCopyArgs): Promise<void>;
   read(args: ProjectAttachmentReadArgs): Promise<ProjectAttachmentReadResult>;
@@ -217,6 +248,7 @@ export interface ProjectsArea {
   promptHistory(
     args: ProjectPromptHistoryArgs,
   ): Promise<ProjectPromptHistoryResult>;
+  env: ProjectEnvArea;
   reorder(args: ProjectReorderArgs): Promise<ProjectReorderResult>;
   sources: ProjectSourcesArea;
   update(args: ProjectUpdateArgs): Promise<ProjectUpdateResult>;
@@ -378,6 +410,31 @@ export function createProjectsArea(args: CreateSdkAreaArgs): ProjectsArea {
       return uploadedPromptAttachmentSchema.parse(await response.json());
     },
   };
+  const env: ProjectEnvArea = {
+    async list(input) {
+      return transport.readJson(
+        transport.api.v1.projects[":id"].env.$get({
+          param: { id: input.projectId },
+        }),
+      );
+    },
+    async set(input) {
+      return transport.readJson(
+        transport.api.v1.projects[":id"].env.$put({
+          param: { id: input.projectId },
+          json: { key: input.key, value: input.value, secret: input.secret },
+        }),
+      );
+    },
+    async unset(input) {
+      await transport.readVoid(
+        transport.api.v1.projects[":id"].env[":key"].$delete({
+          param: { id: input.projectId, key: input.key },
+        }),
+      );
+      return { ok: true };
+    },
+  };
   const sources: ProjectSourcesArea = {
     async add(input) {
       return transport.readJson(
@@ -407,6 +464,7 @@ export function createProjectsArea(args: CreateSdkAreaArgs): ProjectsArea {
 
   return {
     attachments,
+    env,
     async branches(input) {
       const { projectId, signal, ...query } = input;
       return transport.readJson(

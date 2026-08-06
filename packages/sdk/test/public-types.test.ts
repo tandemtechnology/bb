@@ -307,6 +307,7 @@ type ExpectedProjectsKey =
   | "create"
   | "defaultExecutionOptions"
   | "delete"
+  | "env"
   | "fileContent"
   | "files"
   | "get"
@@ -318,6 +319,7 @@ type ExpectedProjectsKey =
   | "update";
 
 type ExpectedProjectSourcesKey = "add" | "delete" | "update";
+type ExpectedProjectEnvKey = "list" | "set" | "unset";
 type ExpectedProjectAttachmentsKey = "copy" | "read" | "upload";
 
 type ExpectedProvidersKey = "list" | "models";
@@ -500,6 +502,9 @@ describe("SDK public type entrypoints", () => {
     expectTypeOf<
       keyof RootBbSdk["projects"]["sources"]
     >().toEqualTypeOf<ExpectedProjectSourcesKey>();
+    expectTypeOf<
+      keyof RootBbSdk["projects"]["env"]
+    >().toEqualTypeOf<ExpectedProjectEnvKey>();
     expectTypeOf<
       keyof RootBbSdk["providers"]
     >().toEqualTypeOf<ExpectedProvidersKey>();

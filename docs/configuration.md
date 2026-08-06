@@ -125,6 +125,38 @@ signal it, so a stale file left by a crash cannot stop an unrelated process.
 | `OPENAI_API_KEY`      | `bb-app env`                                       | OpenAI opt-in routes    | Required only when selecting explicit OpenAI provider routes such as `openai/gpt-4o-mini` or `openai/gpt-transcribe`.                                                                                                                   |
 | `BB_CLAUDE_FABLE_CONFIG_DIR` | host daemon environment                            | Fable models on a non-default path | `CLAUDE_CONFIG_DIR` used for Claude Code threads running a Fable model. Defaults to `~/.claude-fable` on the machine running the host daemon. See [Claude account binding](#claude-account-binding). |
 
+### Project environment variables
+
+A project can declare environment variables that bb injects into every agent
+session it runs for that project:
+
+```bash
+bb project env set <project-id> DATABASE_URL=postgres://localhost/dev
+bb project env set <project-id> API_TOKEN=... --secret
+bb project env list <project-id>
+bb project env unset <project-id> DATABASE_URL
+```
+
+These override the host daemon's own environment. Without them a session
+inherits whatever shell launched the daemon, which differs between a desktop
+launch and a terminal launch and cannot be reviewed from the app.
+
+`--secret` values are **not** stored in the database. They are written to a
+`0600` file under `<dataDir>/projects/<projectId>/env-secrets/` and are never
+returned by any read path: `bb project env list` prints `<secret>` in their
+place. Deleting the project deletes the files. Plain values are stored in the
+database and are readable, so use `--secret` for anything credential-shaped.
+
+Only the first `=` splits the argument, so values may contain `=`. An empty
+value is preserved rather than treated as unset, because tools commonly read a
+present-but-empty variable as configured.
+
+A running provider session keeps the environment it started with; a change
+applies to the next session. bb's own `BB_THREAD_ID`, `BB_PROJECT_ID`,
+`BB_ENVIRONMENT_ID`, and `BB_THREAD_STORAGE` cannot be overridden — they tell a
+session which thread it is, and rewriting them would misroute `bb` CLI calls
+made from inside a turn.
+
 ### Claude account binding
 
 Fable models are entitled only on an Anthropic 1P Console org, never through

@@ -31,6 +31,7 @@ import {
 import { resolveSkillCatalogSources } from "../skills/skill-catalog.js";
 import { discoverPluginSkillIds } from "../skills/injected-skills.js";
 import { resolveWorkspaceProjectSkills } from "../skills/workspace-skills.js";
+import { resolveProjectEnvVars } from "../projects/project-env-vars.js";
 import { UPDATE_ENVIRONMENT_DIRECTORY_TOOL } from "./thread-environment-directory.js";
 import {
   DATA_DIR_AGENT_INSTRUCTIONS_RELATIVE_PATH,
@@ -85,6 +86,11 @@ export interface ResolvedThreadRuntimeCommandConfig {
   instructionMode: InstructionMode;
   instructions: string;
   projectId: string;
+  /**
+   * Project environment for the session, with secret values already read out of
+   * their files. Sensitive: never log this or persist it with the thread.
+   */
+  projectEnvVars: Record<string, string>;
   providerId: string;
   threadStoragePath: string;
   workspacePath: string;
@@ -306,12 +312,20 @@ export async function resolveThreadRuntimeCommandConfig(
     hostId: args.environment.hostId,
     threadId: args.thread.id,
   });
+  // Resolved per command rather than cached, so editing a project variable
+  // applies to the next session without a server restart.
+  const projectEnvVars = await resolveProjectEnvVars({
+    dataDir: deps.config.dataDir,
+    db: deps.db,
+    projectId: args.thread.projectId,
+  });
   return {
     dynamicTools,
     injectedSkillSources,
     instructionMode: "append",
     instructions,
     projectId: args.thread.projectId,
+    projectEnvVars,
     providerId: args.thread.providerId,
     threadStoragePath,
     workspacePath,

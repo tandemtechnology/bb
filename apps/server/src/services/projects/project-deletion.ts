@@ -15,6 +15,7 @@ import type {
   LoggedPendingInteractionWorkSessionDeps,
 } from "../../types.js";
 import { deleteProjectAttachments } from "./attachments.js";
+import { deleteProjectEnvSecrets } from "./project-env-vars.js";
 import {
   requestEnvironmentCleanup,
   runEnvironmentCleanupAdvance,
@@ -219,6 +220,7 @@ export async function advanceProjectDeletion(
 
   deleteProject(deps.db, deps.hub, args.projectId);
   await deleteProjectAttachments(deps.config.dataDir, args.projectId);
+  await deleteProjectEnvSecrets(deps.config.dataDir, args.projectId);
   return true;
 }
 

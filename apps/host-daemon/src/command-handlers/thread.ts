@@ -173,6 +173,7 @@ async function resumeThreadRuntimeIfMissing(
     environmentId: command.environmentId,
     threadId: command.threadId,
     projectId: resumeContext.projectId,
+    projectEnvVars: resumeContext.projectEnvVars,
     providerThreadId: resumeContext.providerThreadId,
     providerId: resumeContext.providerId,
     options: command.options,
@@ -224,6 +225,7 @@ export async function startThread(
         ? { inputGroups: staged.inputGroups }
         : {}),
       options: command.options,
+      projectEnvVars: command.projectEnvVars,
       instructions: command.instructions,
       dynamicTools: command.dynamicTools,
       disallowedTools: command.disallowedTools,

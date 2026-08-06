@@ -159,6 +159,8 @@ interface ThreadRuntimeConfig {
   options: AgentRuntimeExecutionOptions;
   processKey: string;
   projectId?: string;
+  /** Retained so resume and fork rebuild the same environment as the start. */
+  projectEnvVars?: Record<string, string>;
   providerId: string;
   skillRoots: readonly AgentRuntimeSkillRoot[];
   workspacePath: string;
@@ -831,6 +833,7 @@ function createAgentRuntimeInternal(
       baseShellEnv: options.shellEnv,
       environmentId: currentConfig.environmentId,
       projectId: currentConfig.projectId,
+      projectEnvVars: currentConfig.projectEnvVars,
       threadStoragePath: resolveThreadStoragePath({
         options,
         threadId: args.threadId,
@@ -1071,6 +1074,7 @@ function createAgentRuntimeInternal(
       environmentId,
       threadId,
       projectId,
+      projectEnvVars,
       providerId,
       acpLaunchSpec,
       clientRequestId,
@@ -1120,6 +1124,7 @@ function createAgentRuntimeInternal(
             options: execOpts,
             processKey,
             projectId,
+            projectEnvVars,
             providerId,
             skillRoots: providerSkillRoots,
             workspacePath: options.workspacePath,
@@ -1129,6 +1134,7 @@ function createAgentRuntimeInternal(
             baseShellEnv: options.shellEnv,
             environmentId,
             projectId,
+            projectEnvVars,
             threadStoragePath: resolveThreadStoragePath({
               options,
               threadId,
@@ -1237,6 +1243,7 @@ function createAgentRuntimeInternal(
       environmentId,
       threadId,
       projectId,
+      projectEnvVars,
       providerThreadId,
       providerId,
       acpLaunchSpec,
@@ -1282,6 +1289,7 @@ function createAgentRuntimeInternal(
             options: execOpts,
             processKey,
             projectId,
+            projectEnvVars,
             providerId,
             skillRoots: providerSkillRoots,
             workspacePath: options.workspacePath,
@@ -1295,6 +1303,7 @@ function createAgentRuntimeInternal(
             baseShellEnv: options.shellEnv,
             environmentId,
             projectId,
+            projectEnvVars,
             threadStoragePath: resolveThreadStoragePath({
               options,
               threadId,

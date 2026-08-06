@@ -260,9 +260,9 @@ declare const hostSchema: z$1.ZodObject<{
         disconnected: "disconnected";
     }>;
     maxPermissionMode: z$1.ZodEnum<{
-        full: "full";
         auto: "auto";
         "accept-edits": "accept-edits";
+        full: "full";
     }>;
     lastSeenAt: z$1.ZodNullable<z$1.ZodNumber>;
     lastRejectedProtocolVersion: z$1.ZodNullable<z$1.ZodNumber>;
@@ -479,6 +479,23 @@ declare const pluginPendingInteractionSchema: z$1.ZodObject<{
 type PluginPendingInteraction = z$1.infer<typeof pluginPendingInteractionSchema>;
 type PendingInteraction = ProviderPendingInteraction | PluginPendingInteraction;
 
+declare const projectEnvVarSchema: z$1.ZodObject<{
+    key: z$1.ZodString;
+    value: z$1.ZodNullable<z$1.ZodString>;
+    secret: z$1.ZodBoolean;
+    updatedAt: z$1.ZodNumber;
+}, z$1.core.$strip>;
+type ProjectEnvVar = z$1.infer<typeof projectEnvVarSchema>;
+declare const projectEnvVarListSchema: z$1.ZodObject<{
+    envVars: z$1.ZodArray<z$1.ZodObject<{
+        key: z$1.ZodString;
+        value: z$1.ZodNullable<z$1.ZodString>;
+        secret: z$1.ZodBoolean;
+        updatedAt: z$1.ZodNumber;
+    }, z$1.core.$strip>>;
+}, z$1.core.$strip>;
+type ProjectEnvVarList = z$1.infer<typeof projectEnvVarListSchema>;
+
 declare const projectSourceSchema: z$1.ZodObject<{
     id: z$1.ZodString;
     projectId: z$1.ZodString;
@@ -508,9 +525,9 @@ declare const serviceTierSchema: z$1.ZodEnum<{
 }>;
 type ServiceTier = z$1.infer<typeof serviceTierSchema>;
 declare const permissionModeSchema: z$1.ZodEnum<{
-    full: "full";
     auto: "auto";
     "accept-edits": "accept-edits";
+    full: "full";
 }>;
 type PermissionMode = z$1.infer<typeof permissionModeSchema>;
 declare const promptInputSchema: z$1.ZodDiscriminatedUnion<[z$1.ZodObject<{
@@ -613,9 +630,9 @@ declare const resolvedThreadExecutionOptionsSchema: z$1.ZodObject<{
         ultra: "ultra";
     }>;
     permissionMode: z$1.ZodEnum<{
-        full: "full";
         auto: "auto";
         "accept-edits": "accept-edits";
+        full: "full";
     }>;
     source: z$1.ZodEnum<{
         "client/thread/start": "client/thread/start";
@@ -642,9 +659,9 @@ declare const projectExecutionDefaultsSchema: z$1.ZodObject<{
         ultra: "ultra";
     }>;
     permissionMode: z$1.ZodEnum<{
-        full: "full";
         auto: "auto";
         "accept-edits": "accept-edits";
+        full: "full";
     }>;
 }, z$1.core.$strip>;
 type ProjectExecutionDefaults = z$1.infer<typeof projectExecutionDefaultsSchema>;
@@ -1796,9 +1813,9 @@ declare const threadEventSchema: z$1.ZodPipe<z$1.ZodUnknown, z$1.ZodUnion<readon
         }>;
         permissionMode: z$1.ZodEnum<{
             readonly: "readonly";
-            full: "full";
             auto: "auto";
             "accept-edits": "accept-edits";
+            full: "full";
             "workspace-write": "workspace-write";
         }>;
     }, z$1.core.$strip>;
@@ -2001,9 +2018,9 @@ declare const providerInfoSchema: z$1.ZodObject<{
         supportsUserQuestion: z$1.ZodBoolean;
         supportsFork: z$1.ZodBoolean;
         supportedPermissionModes: z$1.ZodArray<z$1.ZodEnum<{
-            full: "full";
             auto: "auto";
             "accept-edits": "accept-edits";
+            full: "full";
         }>>;
     }, z$1.core.$strip>;
     composerActions: z$1.ZodArray<z$1.ZodDiscriminatedUnion<[z$1.ZodObject<{
@@ -2184,9 +2201,9 @@ declare const threadQueuedMessageSchema: z$1.ZodObject<{
         ultra: "ultra";
     }>;
     permissionMode: z$1.ZodEnum<{
-        full: "full";
         auto: "auto";
         "accept-edits": "accept-edits";
+        full: "full";
     }>;
     serviceTier: z$1.ZodEnum<{
         default: "default";
@@ -2505,6 +2522,7 @@ declare const updateProjectSourceRequestSchema: z$1.ZodObject<{
     isDefault: z$1.ZodOptional<z$1.ZodLiteral<true>>;
 }, z$1.core.$strict>;
 type UpdateProjectSourceRequest = z$1.infer<typeof updateProjectSourceRequestSchema>;
+
 declare const commandListResponseSchema: z$1.ZodObject<{
     commands: z$1.ZodArray<z$1.ZodObject<{
         name: z$1.ZodString;
@@ -2536,8 +2554,8 @@ declare const skillListResponseSchema: z$1.ZodObject<{
         name: z$1.ZodString;
         description: z$1.ZodNullable<z$1.ZodString>;
         provider: z$1.ZodNullable<z$1.ZodEnum<{
-            "claude-code": "claude-code";
             codex: "codex";
+            "claude-code": "claude-code";
         }>>;
         scope: z$1.ZodEnum<{
             plugin: "plugin";
@@ -2896,8 +2914,8 @@ declare const environmentArchiveThreadsResponseSchema: z$1.ZodObject<{
 type EnvironmentArchiveThreadsResponse = z$1.infer<typeof environmentArchiveThreadsResponseSchema>;
 declare const pullRequestMergeMethodSchema: z$1.ZodEnum<{
     merge: "merge";
-    rebase: "rebase";
     squash: "squash";
+    rebase: "rebase";
 }>;
 type PullRequestMergeMethod = z$1.infer<typeof pullRequestMergeMethodSchema>;
 declare const commitActionResponseSchema: z$1.ZodObject<{
@@ -2928,8 +2946,8 @@ declare const pullRequestMergeActionResponseSchema: z$1.ZodObject<{
     action: z$1.ZodLiteral<"pull_request_merge">;
     method: z$1.ZodEnum<{
         merge: "merge";
-        rebase: "rebase";
         squash: "squash";
+        rebase: "rebase";
     }>;
     message: z$1.ZodString;
 }, z$1.core.$strip>;
@@ -3530,6 +3548,7 @@ declare const hostDaemonCommandRegistry: {
             approvalReviewer: z$1.ZodNull;
             permissionEscalation: z$1.ZodNull;
         }, z$1.core.$strip>], "permissionMode">>;
+        projectEnvVars: z$1.ZodRecord<z$1.ZodString, z$1.ZodString>;
         instructions: z$1.ZodString;
         dynamicTools: z$1.ZodArray<z$1.ZodObject<{
             name: z$1.ZodString;
@@ -4142,6 +4161,7 @@ declare const hostDaemonCommandRegistry: {
                     insertAfterArgs: z$1.ZodOptional<z$1.ZodNumber>;
                 }, z$1.core.$strict>>;
             }, z$1.core.$strict>>;
+            projectEnvVars: z$1.ZodRecord<z$1.ZodString, z$1.ZodString>;
             instructions: z$1.ZodString;
             dynamicTools: z$1.ZodArray<z$1.ZodObject<{
                 name: z$1.ZodString;
@@ -4438,6 +4458,7 @@ declare const hostDaemonCommandRegistry: {
                     insertAfterArgs: z$1.ZodOptional<z$1.ZodNumber>;
                 }, z$1.core.$strict>>;
             }, z$1.core.$strict>>;
+            projectEnvVars: z$1.ZodRecord<z$1.ZodString, z$1.ZodString>;
             instructions: z$1.ZodString;
             dynamicTools: z$1.ZodArray<z$1.ZodObject<{
                 name: z$1.ZodString;
@@ -6952,8 +6973,8 @@ declare const systemCliSkillsStatusResponseSchema: z$1.ZodObject<{
         hostName: z$1.ZodString;
         status: z$1.ZodEnum<{
             unknown: "unknown";
-            missing: "missing";
             installed: "installed";
+            missing: "missing";
             outdated: "outdated";
         }>;
     }, z$1.core.$strip>>;
@@ -9538,8 +9559,8 @@ declare const threadTimelineResponseSchema: z$1.ZodObject<{
     activePromptMode: z$1.ZodNullable<z$1.ZodObject<{
         mode: z$1.ZodLiteral<"plan">;
         providerId: z$1.ZodEnum<{
-            "claude-code": "claude-code";
             codex: "codex";
+            "claude-code": "claude-code";
         }>;
         prompt: z$1.ZodString;
     }, z$1.core.$strict>>;
@@ -11598,6 +11619,30 @@ interface ProjectSourcesArea {
     delete(args: ProjectSourceDeleteArgs): Promise<ProjectSourceDeleteResult>;
     update(args: ProjectSourceUpdateArgs): Promise<ProjectSourceUpdateResult>;
 }
+interface ProjectEnvListArgs {
+    projectId: string;
+}
+type ProjectEnvListResult = ProjectEnvVarList;
+interface ProjectEnvSetArgs {
+    projectId: string;
+    key: string;
+    value: string;
+    /** Store in a secret file and redact from every read path. */
+    secret: boolean;
+}
+type ProjectEnvSetResult = ProjectEnvVar;
+interface ProjectEnvUnsetArgs {
+    projectId: string;
+    key: string;
+}
+type ProjectEnvUnsetResult = {
+    ok: true;
+};
+interface ProjectEnvArea {
+    list(args: ProjectEnvListArgs): Promise<ProjectEnvListResult>;
+    set(args: ProjectEnvSetArgs): Promise<ProjectEnvSetResult>;
+    unset(args: ProjectEnvUnsetArgs): Promise<ProjectEnvUnsetResult>;
+}
 interface ProjectAttachmentsArea {
     copy(args: ProjectAttachmentCopyArgs): Promise<void>;
     read(args: ProjectAttachmentReadArgs): Promise<ProjectAttachmentReadResult>;
@@ -11616,6 +11661,7 @@ interface ProjectsArea {
     list(args?: ProjectListArgs): Promise<ProjectListResult>;
     paths(args: ProjectPathsArgs): Promise<ProjectPathsResult>;
     promptHistory(args: ProjectPromptHistoryArgs): Promise<ProjectPromptHistoryResult>;
+    env: ProjectEnvArea;
     reorder(args: ProjectReorderArgs): Promise<ProjectReorderResult>;
     sources: ProjectSourcesArea;
     update(args: ProjectUpdateArgs): Promise<ProjectUpdateResult>;

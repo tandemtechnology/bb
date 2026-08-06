@@ -9,8 +9,11 @@ import type {
   Experiments,
   Host,
   PendingInteraction,
+  ProjectEnvVar,
+  ProjectEnvVarList,
   ProjectExecutionDefaults,
   ProjectSource,
+  SetProjectEnvVarRequest,
   ResolvedThreadExecutionOptions,
   ThreadEventRow,
   ThreadQueuedMessage,
@@ -231,6 +234,7 @@ import {
   createProjectRequestSchema,
   createHostJoinCodeRequestSchema,
   createProjectSourceRequestSchema,
+  setProjectEnvVarRequestSchema,
   createQueuedMessageRequestSchema,
   updateQueuedMessageRequestSchema,
   createThreadRequestSchema,
@@ -315,6 +319,7 @@ import {
 import type { ApiError } from "./errors.js";
 
 type PathProjectSourceId = { param: { id: string; sourceId: string } };
+type PathProjectEnvVarKey = { param: { id: string; key: string } };
 type PathThreadInteractionId = {
   param: { id: string; interactionId: string };
 };
@@ -388,6 +393,26 @@ export const publicApiRoutes = {
         promptHistoryQuerySchema,
       ),
       response: jsonResponse<PromptHistoryResponse>(),
+    }),
+    listEnvVars: defineRoute({
+      path: "/projects/:id/env",
+      method: "get",
+      request: noRequest<PathProjectId>(),
+      response: jsonResponse<ProjectEnvVarList>(),
+    }),
+    setEnvVar: defineRoute({
+      path: "/projects/:id/env",
+      method: "put",
+      request: jsonRequest<PathProjectId, SetProjectEnvVarRequest>(
+        setProjectEnvVarRequestSchema,
+      ),
+      response: jsonResponse<ProjectEnvVar>(),
+    }),
+    deleteEnvVar: defineRoute({
+      path: "/projects/:id/env/:key",
+      method: "delete",
+      request: noRequest<PathProjectEnvVarKey>(),
+      response: jsonResponse<{ ok: true }>(),
     }),
     createSource: defineRoute({
       path: "/projects/:id/sources",

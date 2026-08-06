@@ -423,6 +423,7 @@ describe("dispatchCommand", () => {
         instructions: "Be concise.",
         dynamicTools: [],
         injectedSkillSources: [],
+        projectEnvVars: {},
         instructionMode: "append",
       },
     };
@@ -840,6 +841,7 @@ describe("dispatchCommand", () => {
       instructions: "Be concise.",
       dynamicTools: [],
       injectedSkillSources: [],
+      projectEnvVars: {},
       instructionMode: "append",
     };
 
@@ -916,6 +918,7 @@ describe("dispatchCommand", () => {
       instructions: "Be concise.",
       dynamicTools: [],
       injectedSkillSources: [],
+      projectEnvVars: {},
       instructionMode: "append",
     };
     const getProviderCliStatusForProvider = vi.fn(async () => {
@@ -1118,6 +1121,7 @@ describe("dispatchCommand", () => {
       instructions: "Be concise.",
       dynamicTools: [],
       injectedSkillSources: [fixture.source],
+      projectEnvVars: {},
       instructionMode: "append",
     };
 
@@ -1179,6 +1183,7 @@ describe("dispatchCommand", () => {
         instructions: "Be concise.",
         dynamicTools: [],
         injectedSkillSources: [fixture.source],
+        projectEnvVars: {},
         instructionMode: "append",
       },
       target: { mode: "start" },

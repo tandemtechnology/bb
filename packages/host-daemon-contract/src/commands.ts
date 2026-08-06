@@ -35,7 +35,7 @@ import {
   providerCliStatusResponseSchema,
 } from "./local.js";
 
-export const HOST_DAEMON_PROTOCOL_VERSION = 89 as const;
+export const HOST_DAEMON_PROTOCOL_VERSION = 90 as const;
 
 export {
   BRANCH_LIST_LIMIT_MAX,
@@ -215,6 +215,16 @@ const hostDaemonThreadRuntimeContextSchema = z
     providerId: z.string().min(1),
     acpLaunchSpec: hostDaemonAcpLaunchSpecSchema.optional(),
     options: runtimeThreadExecutionOptionsSchema,
+    /**
+     * Project-scoped environment for the provider session, already resolved by
+     * the server (secret values read out of their files).
+     *
+     * Deliberately not part of `options`: `turnResumeContextSchema` omits
+     * `options`, and execution options drive session-restart comparison, which
+     * this should not participate in. Resolved values can be secrets, so they
+     * must not be logged or persisted.
+     */
+    projectEnvVars: z.record(z.string(), z.string()),
     instructions: z.string().min(1),
     dynamicTools: z.array(dynamicToolSchema),
     injectedSkillSources: z.array(hostDaemonInjectedSkillSourceSchema),

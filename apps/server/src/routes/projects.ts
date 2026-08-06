@@ -70,6 +70,12 @@ import {
   beginProjectDeletion,
   requestProjectDeletionAdvance,
 } from "../services/projects/project-deletion.js";
+import {
+  listProjectEnvVarsForDisplay,
+  ProjectEnvVarError,
+  removeProjectEnvVar,
+  setProjectEnvVar,
+} from "../services/projects/project-env-vars.js";
 import { resolveDefaultWorktreeBaseBranch } from "../services/projects/worktree-base-branch.js";
 import { listProjectPromptHistory } from "../services/prompt-history.js";
 import { parsePathKindInclusion } from "./path-list-inclusion.js";
@@ -322,7 +328,7 @@ async function inspectProjectGitRemoteBestEffort(
 }
 
 export function registerProjectRoutes(app: Hono, deps: AppDeps): void {
-  const { get, post, patch, del } = typedRoutes<PublicApiSchema>(app, {
+  const { get, post, patch, put, del } = typedRoutes<PublicApiSchema>(app, {
     onValidationError: (msg) => new ApiError(400, "invalid_request", msg),
   });
   const routes = publicApiRoutes.projects;
@@ -446,6 +452,66 @@ export function registerProjectRoutes(app: Hono, deps: AppDeps): void {
     beginProjectDeletion(deps, { projectId: id });
     requestProjectDeletionAdvance(deps, { projectId: id });
     return context.json({ ok: true });
+  });
+
+  get(routes.listEnvVars, (context) => {
+    const projectId = context.req.param("id");
+    requirePublicStandardProject(deps.db, projectId);
+    return context.json({
+      envVars: listProjectEnvVarsForDisplay({
+        dataDir: deps.config.dataDir,
+        db: deps.db,
+        projectId,
+      }),
+    });
+  });
+
+  put(routes.setEnvVar, async (context, payload) => {
+    const projectId = context.req.param("id");
+    requirePublicStandardProject(deps.db, projectId);
+    try {
+      const envVar = await setProjectEnvVar({
+        dataDir: deps.config.dataDir,
+        db: deps.db,
+        now: Date.now(),
+        projectId,
+        request: payload,
+      });
+      // Never echo a secret back, even to the caller that just supplied it: the
+      // response is logged and cached in more places than the request body.
+      return context.json(envVar.secret ? { ...envVar, value: null } : envVar);
+    } catch (error) {
+      if (error instanceof ProjectEnvVarError) {
+        throw new ApiError(400, "invalid_request", error.message);
+      }
+      throw error;
+    }
+  });
+
+  del(routes.deleteEnvVar, async (context) => {
+    const projectId = context.req.param("id");
+    requirePublicStandardProject(deps.db, projectId);
+    try {
+      const removed = await removeProjectEnvVar({
+        dataDir: deps.config.dataDir,
+        db: deps.db,
+        key: context.req.param("key"),
+        projectId,
+      });
+      if (!removed) {
+        throw new ApiError(
+          404,
+          "invalid_request",
+          "Project environment variable not found",
+        );
+      }
+      return context.json({ ok: true } as const);
+    } catch (error) {
+      if (error instanceof ProjectEnvVarError) {
+        throw new ApiError(400, "invalid_request", error.message);
+      }
+      throw error;
+    }
   });
 
   post(routes.createSource, async (context, payload) => {

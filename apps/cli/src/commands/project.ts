@@ -6,6 +6,7 @@ import type {
   ProjectResponse,
   UpdateProjectSourceRequest,
 } from "@bb/server-contract";
+import { PROJECT_ENV_SECRET_PLACEHOLDER, type ProjectEnvVar } from "@bb/domain";
 import mimeTypes from "mime-types";
 import { action } from "../action.js";
 import { createCliBbSdk } from "../client.js";
@@ -250,6 +251,11 @@ export function registerProjectCommands(
   const source = project
     .command("source")
     .description("Manage project sources");
+  const env = project
+    .command("env")
+    .description(
+      "Manage environment variables injected into this project's agent sessions",
+    );
   const attachment = project
     .command("attachment")
     .description("Upload and download server-managed project attachments");
@@ -570,6 +576,76 @@ export function registerProjectCommands(
       }),
     );
 
+  env
+    .command("list <projectId>")
+    .description("List environment variables for a project")
+    .option("--json", "Print machine-readable JSON output")
+    .action(
+      action(async (projectId: string, opts: { json?: boolean }) => {
+        const sdk = createCliBbSdk(getUrl());
+        const result = await sdk.projects.env.list({ projectId });
+        if (outputJson(opts, result)) return;
+        if (result.envVars.length === 0) {
+          console.log("No environment variables set");
+          return;
+        }
+        printProjectEnvTable(result.envVars);
+      }),
+    );
+
+  env
+    .command("set <projectId> <assignment>")
+    .description(
+      "Set an environment variable, given as KEY=VALUE. Use --secret to store the value in a 0600 file instead of the database; secret values are never readable back.",
+    )
+    .option(
+      "--secret",
+      "Store the value as a secret and redact it from all reads",
+    )
+    .option("--json", "Print machine-readable JSON output")
+    .action(
+      action(
+        async (
+          projectId: string,
+          assignment: string,
+          opts: { secret?: boolean; json?: boolean },
+        ) => {
+          const separator = assignment.indexOf("=");
+          if (separator <= 0) {
+            throw new Error(
+              `Expected KEY=VALUE, received "${assignment}". A value containing "=" is fine; only the first one splits.`,
+            );
+          }
+          const sdk = createCliBbSdk(getUrl());
+          const envVar = await sdk.projects.env.set({
+            projectId,
+            key: assignment.slice(0, separator),
+            value: assignment.slice(separator + 1),
+            secret: opts.secret === true,
+          });
+          if (outputJson(opts, envVar)) return;
+          console.log(
+            `Set ${envVar.key}${envVar.secret ? " (secret)" : ""} for ${projectId}`,
+          );
+        },
+      ),
+    );
+
+  env
+    .command("unset <projectId> <key>")
+    .description("Remove an environment variable from a project")
+    .option("--json", "Print machine-readable JSON output")
+    .action(
+      action(
+        async (projectId: string, key: string, opts: { json?: boolean }) => {
+          const sdk = createCliBbSdk(getUrl());
+          const result = await sdk.projects.env.unset({ projectId, key });
+          if (outputJson(opts, result)) return;
+          console.log(`Unset ${key} for ${projectId}`);
+        },
+      ),
+    );
+
   source
     .command("add <projectId>")
     .description("Add a source to a project")
@@ -693,6 +769,29 @@ function printProject(project: ProjectResponse): void {
       console.log(`    ${source.type}  ${source.path}${defaultMarker}`);
     }
   }
+  console.log("");
+}
+
+function printProjectEnvTable(envVars: readonly ProjectEnvVar[]): void {
+  const rows = envVars.map((envVar) => [
+    envVar.key,
+    // A secret's value is never returned by the API, so there is nothing to
+    // print but the marker. Distinguishable from a plain empty-string value.
+    envVar.secret ? PROJECT_ENV_SECRET_PLACEHOLDER : (envVar.value ?? ""),
+  ]);
+  const keyWidth = Math.max(3, ...rows.map((row) => row[0].length));
+  const valueWidth = Math.max(5, ...rows.map((row) => row[1].length));
+  const table = renderBorderlessTable(
+    {
+      head: ["Key", "Value"],
+      colWidths: [keyWidth, valueWidth],
+      trimTrailingWhitespace: true,
+    },
+    rows,
+  );
+
+  console.log("");
+  console.log(table);
   console.log("");
 }
 

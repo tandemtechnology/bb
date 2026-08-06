@@ -241,6 +241,16 @@ status|install` to inspect or install provider CLIs on a selected machine.
   resolution and fallback as project create. Use `--clone` instead of `--path`
   to clone the project's remote there; `--remote-url` and `--target-path` are
   optional clone overrides.
+- Use `bb project env set <project-id> KEY=VALUE` to inject an environment
+  variable into every agent session bb runs for that project; it overrides the
+  host daemon's own environment. Add `--secret` to store the value in a 0600
+  file instead of the database — secret values are never returned, and
+  `bb project env list` prints `<secret>` in their place. Only the first `=`
+  splits, so values may contain `=`. Remove one with `bb project env unset
+  <project-id> <key>`. A running session keeps the environment it started with,
+  so a change applies to the next session. bb's own `BB_THREAD_ID`,
+  `BB_PROJECT_ID`, `BB_ENVIRONMENT_ID`, and `BB_THREAD_STORAGE` cannot be
+  overridden.
 - `bb project paths|files|content|commands` accept `--machine <id-or-name>`
   (`--host` alias) or `--environment <id>`, but not both. An environment uses
   its owning machine and workspace; an explicit machine uses that machine's

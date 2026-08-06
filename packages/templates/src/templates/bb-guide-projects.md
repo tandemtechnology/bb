@@ -82,3 +82,23 @@ Sources:
     --default
 
   bb project source delete <projectId> <sourceId>
+
+Environment variables:
+
+  Variables injected into every agent session bb runs for the project. They
+  override the host daemon's own environment, so a project can declare what it
+  needs instead of depending on the shell that launched bb.
+
+  bb project env list <projectId>         List variables (secrets show <secret>)
+
+  bb project env set <projectId> KEY=VALUE
+    --secret                              Store in a 0600 file rather than the
+                                          database, and never read it back
+
+  bb project env unset <projectId> <key>
+
+  Only the first "=" splits, so values may contain "=". A running session keeps
+  the environment it started with; a change applies to the next session.
+
+  bb's own BB_THREAD_ID, BB_PROJECT_ID, BB_ENVIRONMENT_ID, and BB_THREAD_STORAGE
+  cannot be overridden — they tell a session which thread it is.

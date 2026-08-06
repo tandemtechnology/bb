@@ -279,6 +279,11 @@ export type UpdateProjectSourceRequest = z.infer<
   typeof updateProjectSourceRequestSchema
 >;
 
+// Project environment variables live in @bb/domain because the host daemon
+// consumes the same shape; re-exported here so route definitions keep one
+// import site alongside the other project request schemas.
+export { setProjectEnvVarRequestSchema } from "@bb/domain";
+
 /** `command` = Claude Code legacy slash command (`.claude/commands/*.md`). */
 export const providerCommandSourceSchema = z.enum(["skill", "command"]);
 export type ProviderCommandSource = z.infer<typeof providerCommandSourceSchema>;
