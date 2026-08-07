@@ -356,7 +356,22 @@ export const DEFAULT_OPENAI_API_KEY = "";
 // runs and can always be disabled with BB_TELEMETRY=false.
 export const DEFAULT_BB_POSTHOG_API_KEY =
   "phc_tejoYoNLV6vG8QAd5eYXXvcsENFYnP4brpZDGqG7zvpy";
-export const DEFAULT_BB_TELEMETRY = true;
+// FORK DIVERGENCE: upstream defaults this to true.
+//
+// This fork runs against BAA-covered Anthropic orgs and is used for
+// PHI-adjacent work, so no usage data may leave the machine unless someone
+// deliberately opts in. Upstream's opt-out default is the wrong direction here:
+// an install nobody has configured yet has already sent `app_started`.
+//
+// Opting out at runtime is also not actually reachable on the desktop surface.
+// `BB_TELEMETRY` is not a `bb-app config` key, and the macOS app launched from
+// Finder never sources a shell, so the documented `BB_TELEMETRY=false` escape
+// hatch cannot be applied there. Defaulting to false is what holds in practice.
+//
+// Enabling still works deliberately: `BB_TELEMETRY=true` in the server's
+// environment. Pinned by a test so an upstream merge cannot flip it back
+// silently.
+export const DEFAULT_BB_TELEMETRY = false;
 export const DEFAULT_BB_DEV_APP_HOST = "";
 export const DEFAULT_BB_INFERENCE = DEFAULTS.inferenceModel;
 export const DEFAULT_BB_TRANSCRIPTION = DEFAULTS.transcriptionModel;

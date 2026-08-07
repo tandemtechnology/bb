@@ -68,12 +68,20 @@ docs, start with
 
 ### Telemetry
 
-Production runs (the desktop app and `npx bb-app`) send anonymous usage
-telemetry (app starts, thread creation counts, and user message counts) to help
-us understand adoption. Identification is a random per-install id stored in your
-data dir — no user, host, project, workspace, or message content is ever
-attached. Development/source runs never send. Opt out any run with
-`BB_TELEMETRY=false`. See
+**This fork ships with telemetry disabled by default.** Upstream bb enables it
+by default; this fork is used for PHI-adjacent work under a BAA, so usage data
+only leaves the machine on a deliberate opt-in.
+
+Upstream behaviour, for reference: production runs (the desktop app and
+`npx bb-app`) send anonymous usage telemetry (app starts, thread creation
+counts, and user message counts) to help understand adoption. Identification is
+a random per-install id stored in your data dir — no user, host, project,
+workspace, or message content is ever attached. Development/source runs never
+send.
+
+Here, none of that happens unless you set `BB_TELEMETRY=true`. With telemetry
+disabled nothing is created at all, not even the install id. See
+[`docs/configuration.md`](./docs/configuration.md#telemetry) and
 [`apps/server/src/services/system/telemetry.ts`](./apps/server/src/services/system/telemetry.ts).
 
 ## Development

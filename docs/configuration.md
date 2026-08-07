@@ -124,6 +124,37 @@ signal it, so a stale file left by a crash cannot stop an unrelated process.
 | `BB_LOG_LEVEL`        | `bb-app config`                                    | Startup-only debugging  | Log level: `trace`, `debug`, `info`, `warn`, `error`, or `fatal`. A full launcher or desktop app restart is required.                                                                                                                   |
 | `OPENAI_API_KEY`      | `bb-app env`                                       | OpenAI opt-in routes    | Required only when selecting explicit OpenAI provider routes such as `openai/gpt-4o-mini` or `openai/gpt-transcribe`.                                                                                                                   |
 | `BB_CLAUDE_FABLE_CONFIG_DIR` | host daemon environment                            | Fable models on a non-default path | `CLAUDE_CONFIG_DIR` used for Claude Code threads running a Fable model. Defaults to `~/.claude-fable` on the machine running the host daemon. See [Claude account binding](#claude-account-binding). |
+| `BB_TELEMETRY`        | server environment                                 | Opting in to usage telemetry | `true` re-enables anonymous PostHog usage events. **Defaults to `false` in this fork** (upstream defaults to `true`). Production runs only. See [Telemetry](#telemetry). |
+
+### Telemetry
+
+**This fork disables telemetry by default. Upstream enables it by default.**
+
+Upstream bb sends anonymous usage events (install id, app start, onboarding
+funnel) to PostHog from production server runs. This fork is used for
+PHI-adjacent work against BAA-covered Anthropic orgs, so nothing leaves the
+machine unless someone opts in:
+
+```bash
+BB_TELEMETRY=true npx bb-app   # deliberate opt-in
+```
+
+Two things made a default change the right fix rather than documentation. An
+install that nobody has configured yet has already sent `app_started`, so an
+opt-out default leaks before anyone can act on it. And the opt-out is not
+reachable on the desktop surface anyway: `BB_TELEMETRY` is not a
+`bb-app config` key, and the macOS app launched from Finder never sources a
+shell, so there is nowhere to put `BB_TELEMETRY=false`.
+
+Disabled telemetry creates nothing at all — not even the `telemetry-id` install
+identifier in the data directory. If you are migrating an install that ran with
+telemetry enabled, delete `<dataDir>/telemetry-id` to drop the existing id.
+
+Telemetry never ran in development regardless of this setting: it is gated on
+`NODE_ENV=production`, so `pnpm dev` has always been silent.
+
+A merge from upstream that restores the opt-out default will fail the
+"telemetry is opt-in in this fork" test in `packages/config/test/config.test.ts`.
 
 ### Project environment variables
 

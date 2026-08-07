@@ -5,6 +5,7 @@ import { loadCliConfig } from "../src/cli.js";
 import { loadCommonConfig } from "../src/common.js";
 import { loadDatabaseConfig } from "../src/database.js";
 import { loadDevAppConfig } from "../src/dev-app.js";
+import { DEFAULT_BB_TELEMETRY } from "../src/env-vars.js";
 import { loadHostDaemonEntrypointConfig } from "../src/host-daemon-entrypoint.js";
 import {
   loadHostDaemonConfig,
@@ -799,5 +800,28 @@ describe("provider model config", () => {
         }),
       ).toThrow(/BB_INFERENCE/u);
     }
+  });
+});
+
+// This fork diverges from upstream, which defaults telemetry on. It is used for
+// PHI-adjacent work under a BAA, so an install nobody has configured yet must
+// not phone home — and the documented BB_TELEMETRY=false opt-out is unreachable
+// on the macOS desktop surface, which never sources a shell. A merge from
+// upstream that restores the opt-out default has to fail here, loudly, rather
+// than ship quietly.
+describe("telemetry is opt-in in this fork", () => {
+  it("defaults to disabled when BB_TELEMETRY is unset", () => {
+    expect(DEFAULT_BB_TELEMETRY).toBe(false);
+    expect(
+      loadServerConfig({ env: createServerRuntimeEnv() }).BB_TELEMETRY,
+    ).toBe(false);
+  });
+
+  it("still allows a deliberate opt-in", () => {
+    expect(
+      loadServerConfig({
+        env: createServerRuntimeEnv({ BB_TELEMETRY: "true" }),
+      }).BB_TELEMETRY,
+    ).toBe(true);
   });
 });
