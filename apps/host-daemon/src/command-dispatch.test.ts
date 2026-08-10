@@ -497,6 +497,7 @@ describe("dispatchCommand", () => {
         instructions: "Be concise.",
         dynamicTools: [],
         injectedSkillSources: [],
+        projectEnvVars: {},
         instructionMode: "append",
       },
       target: { mode: "start" },
@@ -761,6 +762,7 @@ describe("dispatchCommand", () => {
         instructions: "Be concise.",
         dynamicTools: [],
         injectedSkillSources: [],
+        projectEnvVars: {},
         instructionMode: "append",
       },
     };

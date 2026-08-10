@@ -2,6 +2,7 @@ import fs from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { FORK_MIGRATION_IDX_START } from "../src/forus-migrations.js";
 import {
   publishedMigrationWhens,
   publishedMigrationWhensByTag,
@@ -71,19 +72,53 @@ describe("migration journal integrity", () => {
     expect(violations).toEqual([]);
   });
 
-  it("has `idx` values matching array position", () => {
+  // FORK DIVERGENCE: upstream asserts idx === array position for every entry.
+  //
+  // This fork reserves indexes at or above 9000 for its own migrations so they
+  // never collide with upstream's next sequential number — see
+  // docs/forus-fork-migrations.md. That block is deliberately discontiguous, so
+  // the position check now applies to upstream entries only.
+  //
+  // The invariant keeps its real job, catching an upstream migration that was
+  // accidentally renumbered. Nothing in production code reads `idx`: drizzle
+  // loads `<tag>.sql` and orders by `when`, so the fork block is inert beyond
+  // telling drizzle-kit where to continue numbering.
+  it("has `idx` values matching array position for upstream migrations", () => {
     const { entries } = readJournal();
 
     const mismatches: string[] = [];
     for (let i = 0; i < entries.length; i++) {
-      if (entries[i].idx !== i) {
+      const entry = entries[i];
+      if (entry.idx >= FORK_MIGRATION_IDX_START) {
+        continue;
+      }
+      if (entry.idx !== i) {
         mismatches.push(
-          `entries[${i}] ${entries[i].tag} has idx=${entries[i].idx}, expected ${i}`,
+          `entries[${i}] ${entry.tag} has idx=${entry.idx}, expected ${i}`,
         );
       }
     }
 
     expect(mismatches).toEqual([]);
+  });
+
+  it("keeps fork migrations in one block at the end of the journal", () => {
+    // Ordering is by `when`, so an upstream entry after the fork block would
+    // still apply correctly — but it would make the journal much harder to read
+    // and the next rebase harder to reason about.
+    const { entries } = readJournal();
+    const firstForkIndex = entries.findIndex(
+      (entry) => entry.idx >= FORK_MIGRATION_IDX_START,
+    );
+    if (firstForkIndex === -1) {
+      return;
+    }
+    expect(
+      entries
+        .slice(firstForkIndex)
+        .filter((entry) => entry.idx < FORK_MIGRATION_IDX_START)
+        .map((entry) => entry.tag),
+    ).toEqual([]);
   });
 
   it("has a matching .sql file for every journal entry", () => {
