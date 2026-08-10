@@ -8,6 +8,15 @@
 
 # bb
 
+> **This is the Forus fork of [bb](https://github.com/get-bb/bb).** There is no
+> packaged release — run it from source. Start with
+> [docs/forus-getting-started.md](./docs/forus-getting-started.md).
+>
+> It differs from upstream in four ways: Fable threads run on a separate Claude
+> account, projects can declare environment variables, telemetry is off by
+> default, and migrations are numbered from 9000. The rest of this README is
+> upstream's.
+
 [![npm version](https://img.shields.io/npm/v/bb-app.svg)](https://www.npmjs.com/package/bb-app)
 [![Join Discord](https://img.shields.io/badge/Discord-Join%20server-5865F2?logo=discord&logoColor=white)](https://discord.gg/kvBU6tJhcJ)
 
