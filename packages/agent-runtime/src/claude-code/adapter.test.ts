@@ -2681,6 +2681,60 @@ describe("claude-code provider adapter", () => {
     );
   });
 
+  it("translateEvent includes the denied tool input in the warning", () => {
+    const adapter = createClaudeCodeProviderAdapter();
+    adapter.translateEvent({
+      jsonrpc: "2.0",
+      method: "sdk/message",
+      params: {
+        threadId: "claude-thread-1",
+        message: {
+          type: "assistant",
+          message: {
+            role: "assistant",
+            content: [
+              {
+                type: "tool_use",
+                id: "tool-1",
+                name: "Bash",
+                input: { command: "rm -rf /tmp/scratch" },
+              },
+            ],
+          },
+          session_id: "session-1",
+        },
+      },
+    });
+
+    const events = adapter.translateEvent({
+      jsonrpc: "2.0",
+      method: "sdk/message",
+      params: {
+        threadId: "claude-thread-1",
+        message: {
+          type: "system",
+          subtype: "permission_denied",
+          tool_name: "Bash",
+          tool_use_id: "tool-1",
+          decision_reason_type: "classifier",
+          decision_reason: "The command is too risky to approve automatically.",
+          message: "Permission denied",
+          uuid: "message-2",
+          session_id: "session-1",
+        },
+      },
+    });
+
+    expect(events).toEqual([
+      expect.objectContaining({
+        type: "provider/warning",
+        summary: "Bash was denied automatically",
+        details:
+          "The command is too risky to approve automatically. (classifier)\n\nBash input:\nrm -rf /tmp/scratch",
+      }),
+    ]);
+  });
+
   it("translateEvent maps thread identity envelopes", () => {
     const adapter = createClaudeCodeProviderAdapter();
 

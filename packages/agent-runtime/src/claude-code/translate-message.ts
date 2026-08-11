@@ -250,6 +250,52 @@ function isDuplicateClaudeModelFallback(
   );
 }
 
+const CLAUDE_DENIED_TOOL_INPUT_MAX_LENGTH = 600;
+
+function truncateClaudeDeniedToolInput(text: string): string {
+  const collapsed = text.trim();
+  return collapsed.length > CLAUDE_DENIED_TOOL_INPUT_MAX_LENGTH
+    ? `${collapsed.slice(0, CLAUDE_DENIED_TOOL_INPUT_MAX_LENGTH)}…`
+    : collapsed;
+}
+
+/**
+ * Describes the input of a tool call that was denied. The SDK's
+ * permission_denied message carries only the tool name and tool_use_id, so the
+ * input is recovered from the started item recorded when the tool_use arrived.
+ */
+function describeClaudeDeniedToolInput(
+  item: ThreadEventItem | undefined,
+): string | null {
+  if (!item) {
+    return null;
+  }
+  switch (item.type) {
+    case "commandExecution":
+      return truncateClaudeDeniedToolInput(item.command) || null;
+    case "fileChange": {
+      const paths = item.changes.map((change) => change.path).filter(Boolean);
+      return paths.length > 0
+        ? truncateClaudeDeniedToolInput(paths.join(", "))
+        : null;
+    }
+    case "webFetch":
+      return truncateClaudeDeniedToolInput(item.url) || null;
+    case "webSearch":
+      return truncateClaudeDeniedToolInput(item.queries.join(", ")) || null;
+    case "imageView":
+      return truncateClaudeDeniedToolInput(item.path) || null;
+    case "toolCall": {
+      if (!item.arguments) {
+        return null;
+      }
+      return truncateClaudeDeniedToolInput(JSON.stringify(item.arguments));
+    }
+    default:
+      return null;
+  }
+}
+
 function buildClaudeProviderErrorEvent(
   args: BuildClaudeProviderErrorEventArgs,
 ): ThreadEvent {
@@ -635,6 +681,12 @@ export function translateClaudeSdkMessage(
       if (permissionDeniedMessage.success) {
         const message = permissionDeniedMessage.data;
         const reason = message.decision_reason ?? message.message;
+        const reasonLine = message.decision_reason_type
+          ? `${reason} (${message.decision_reason_type})`
+          : reason;
+        const deniedInput = describeClaudeDeniedToolInput(
+          state.toolItemsByCallId.get(message.tool_use_id),
+        );
         events.push({
           type: "provider/warning",
           threadId,
@@ -644,9 +696,9 @@ export function translateClaudeSdkMessage(
             : threadScope(),
           category: "general",
           summary: `${message.tool_name} was denied automatically`,
-          details: message.decision_reason_type
-            ? `${reason} (${message.decision_reason_type})`
-            : reason,
+          details: deniedInput
+            ? `${reasonLine}\n\n${message.tool_name} input:\n${deniedInput}`
+            : reasonLine,
         });
         return events;
       }
