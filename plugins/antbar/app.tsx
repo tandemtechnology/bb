@@ -1,11 +1,12 @@
-// bb-plugin-thread-groups — frontend entry.
+// AntBar — frontend entry.
 //
 // Surfaces:
+//  - an attention Inbox above the project and group hierarchy;
 //  - a "Groups" nav panel: a kanban board of the current project's threads
 //    bucketed into user-defined groups (+ an Ungrouped column), with
 //    drag-and-drop assignment;
 //  - a thread-side "Group" panel tab for filing the open thread;
-//  - an always-visible group chip in the thread header.
+//  - a single sidebar provider for Inbox → Project → Group → Thread.
 //
 // Data flows over RPC (see ./server contract) and refreshes live via
 // useRealtime("board:<projectId>"). Style with host theme tokens only.
@@ -43,6 +44,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Icon, type IconName } from "@/components/ui/icon";
+import { projectInbox, sortThreads, threadTitle } from "./inbox";
 
 type Rpc = ReturnType<typeof useRpc<typeof rpcContract>>;
 
@@ -143,7 +145,9 @@ function useThreadGroup(threadId: string, projectId: string | null) {
     (groupId: string | null) => {
       if (!projectId) return;
       setCurrent(groupId); // optimistic; realtime/load reconciles
-      void rpc.call("assignThread", { threadId, projectId, groupId }).then(load);
+      void rpc
+        .call("assignThread", { threadId, projectId, groupId })
+        .then(load);
     },
     [rpc, projectId, threadId, load],
   );
@@ -317,9 +321,7 @@ function BoardColumn({
       }}
       className={
         "flex w-72 shrink-0 flex-col rounded-lg p-2 transition-colors " +
-        (isDropTarget
-          ? "bg-state-active ring-2 ring-primary/50"
-          : "bg-card/50")
+        (isDropTarget ? "bg-state-active ring-2 ring-primary/50" : "bg-card/50")
       }
     >
       <div className="mb-2 flex items-center justify-between px-1">
@@ -525,7 +527,9 @@ function Board() {
   const assign = useCallback(
     (threadId: string, groupId: string | null) => {
       if (!projectId) return;
-      setBoard((prev) => (prev ? optimisticMove(prev, threadId, groupId) : prev));
+      setBoard((prev) =>
+        prev ? optimisticMove(prev, threadId, groupId) : prev,
+      );
       void rpc.call("assignThread", { threadId, projectId, groupId });
     },
     [rpc, projectId],
@@ -565,7 +569,9 @@ function Board() {
             <BoardColumn
               key={column.groupId ?? "__ungrouped__"}
               column={column}
-              group={column.groupId ? (groupById.get(column.groupId) ?? null) : null}
+              group={
+                column.groupId ? (groupById.get(column.groupId) ?? null) : null
+              }
               groups={board.groups}
               isDropTarget={dragging && dragOver === column.groupId}
               onAssign={assign}
@@ -606,7 +612,10 @@ function Board() {
 
 function AssignTab({ threadId }: { threadId: string }) {
   const { projectId } = useBbContext();
-  const { groups, current, error, assign } = useThreadGroup(threadId, projectId);
+  const { groups, current, error, assign } = useThreadGroup(
+    threadId,
+    projectId,
+  );
 
   if (!projectId) {
     return (
@@ -660,80 +669,8 @@ function AssignTab({ threadId }: { threadId: string }) {
 }
 
 // --------------------------------------------------------------------------
-// Thread header group chip
+// AntBar sidebar: Inbox → Project → Group → Thread
 // --------------------------------------------------------------------------
-
-function GroupChip({
-  threadId,
-  projectId,
-  isCompactViewport,
-}: {
-  threadId: string;
-  projectId: string;
-  isCompactViewport: boolean;
-}) {
-  const { groups, current, assign } = useThreadGroup(threadId, projectId);
-  const active = current ? (groups ?? []).find((g) => g.id === current) : null;
-
-  const label = active
-    ? isCompactViewport
-      ? active.emoji || active.name.slice(0, 1)
-      : groupLabel(active)
-    : isCompactViewport
-      ? "＋"
-      : "Group";
-
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button
-          size="sm"
-          variant={active ? "secondary" : "ghost"}
-          className="h-7 max-w-40"
-          aria-label={active ? `Group: ${active.name}` : "Assign group"}
-        >
-          <span className="truncate">{label}</span>
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
-        {(groups ?? []).length === 0 ? (
-          <DropdownMenuItem disabled>No groups yet</DropdownMenuItem>
-        ) : (
-          (groups ?? []).map((group) => (
-            <DropdownMenuItem
-              key={group.id}
-              disabled={group.id === current}
-              onSelect={() => assign(group.id)}
-            >
-              {groupLabel(group)}
-            </DropdownMenuItem>
-          ))
-        )}
-        {current !== null ? (
-          <>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onSelect={() => assign(null)}>
-              Remove from group
-            </DropdownMenuItem>
-          </>
-        ) : null}
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-}
-
-// --------------------------------------------------------------------------
-// Nested sidebar thread list: Project → Group → threads
-// --------------------------------------------------------------------------
-
-const threadTitle = (t: PluginSidebarThread) =>
-  t.title ?? t.titleFallback ?? "Untitled thread";
-
-// Pinned first, then most-recently-updated.
-function sortThreads(a: PluginSidebarThread, b: PluginSidebarThread) {
-  if (a.isPinned !== b.isPinned) return a.isPinned ? -1 : 1;
-  return b.updatedAt - a.updatedAt;
-}
 
 // Mirrors bb's native ThreadStatusGlyph mapping (icon + tone) with tokens the
 // plugin Tailwind build is guaranteed to emit. animate-shine-icon is bb-only,
@@ -750,7 +687,10 @@ const STATUS_GLYPH: Partial<
     icon: "CircleQuestion",
     className: "text-muted-foreground/75",
   },
-  runtime: { icon: "Loading", className: "animate-spin text-muted-foreground/60" },
+  runtime: {
+    icon: "Loading",
+    className: "animate-spin text-muted-foreground/60",
+  },
   workflow: { icon: "Workflow", className: SHINE },
   "background-agent": { icon: "UserRoundPlus", className: SHINE },
   "background-command": { icon: "Terminal", className: SHINE },
@@ -760,7 +700,23 @@ const STATUS_GLYPH: Partial<
   "working-draft": { icon: "Edit", className: SHINE },
 };
 
-function StatusGlyph({ thread }: { thread: PluginSidebarThread }) {
+function StatusGlyph({
+  thread,
+  needsInput = false,
+}: {
+  thread: PluginSidebarThread;
+  needsInput?: boolean;
+}) {
+  if (needsInput) {
+    return (
+      <Icon
+        name="CircleQuestion"
+        className="size-4 text-primary"
+        aria-label={thread.indicatorLabel ?? "Thread needs your input"}
+      />
+    );
+  }
+
   const label = thread.indicatorLabel ?? undefined;
   const mapped = STATUS_GLYPH[thread.indicator];
   if (mapped) {
@@ -786,6 +742,8 @@ function StatusGlyph({ thread }: { thread: PluginSidebarThread }) {
 function SidebarRow({
   thread,
   active,
+  projectName,
+  needsInput = false,
   projectGroups,
   currentGroupId,
   actions,
@@ -796,10 +754,16 @@ function SidebarRow({
 }: {
   thread: PluginSidebarThread;
   active: boolean;
+  projectName?: string;
+  needsInput?: boolean;
   projectGroups: Group[];
   currentGroupId: string | null;
   actions: ReturnType<typeof experimental_useSidebarThreadActions>;
-  onAssign: (threadId: string, projectId: string, groupId: string | null) => void;
+  onAssign: (
+    threadId: string,
+    projectId: string,
+    groupId: string | null,
+  ) => void;
   onNavigate: () => void;
   onDragStart: (threadId: string, projectId: string) => void;
   onDragEnd: () => void;
@@ -851,10 +815,15 @@ function SidebarRow({
           />
         ) : null}
         <span className="min-w-0 flex-1 truncate">{threadTitle(thread)}</span>
+        {projectName ? (
+          <span className="max-w-20 shrink-0 truncate text-xs text-muted-foreground">
+            {projectName}
+          </span>
+        ) : null}
       </a>
       <div className="flex shrink-0 items-center gap-0.5 pr-1">
         <span className="flex size-4 items-center justify-center group-hover/row:hidden">
-          <StatusGlyph thread={thread} />
+          <StatusGlyph thread={thread} needsInput={needsInput} />
         </span>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -868,55 +837,61 @@ function SidebarRow({
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="max-h-96 overflow-y-auto">
-          <DropdownMenuItem
-            onSelect={() => {
-              actions.open(thread.id, { split: true });
-              onNavigate();
-            }}
-          >
-            Open in split
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            onSelect={() => void actions.setPinned(thread.id, !thread.isPinned)}
-          >
-            {thread.isPinned ? "Unpin" : "Pin"}
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            onSelect={() => void actions.setRead(thread.id, thread.isUnread)}
-          >
-            {thread.isUnread ? "Mark read" : "Mark unread"}
-          </DropdownMenuItem>
-          <DropdownMenuSeparator />
-          {projectGroups.length === 0 ? (
-            <DropdownMenuItem disabled>No groups in this project</DropdownMenuItem>
-          ) : (
-            projectGroups.map((group) => (
-              <DropdownMenuItem
-                key={group.id}
-                disabled={group.id === currentGroupId}
-                onSelect={() => onAssign(thread.id, thread.projectId, group.id)}
-              >
-                Move to {groupLabel(group)}
-              </DropdownMenuItem>
-            ))
-          )}
-          {currentGroupId !== null ? (
             <DropdownMenuItem
-              onSelect={() => onAssign(thread.id, thread.projectId, null)}
+              onSelect={() => {
+                actions.open(thread.id, { split: true });
+                onNavigate();
+              }}
             >
-              Remove from group
+              Open in split
             </DropdownMenuItem>
-          ) : null}
-          <DropdownMenuSeparator />
-          <DropdownMenuItem onSelect={() => actions.archive(thread.id)}>
-            Archive
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            className="text-destructive"
-            onSelect={() => actions.requestDelete(thread.id)}
-          >
-            Delete…
-          </DropdownMenuItem>
+            <DropdownMenuItem
+              onSelect={() =>
+                void actions.setPinned(thread.id, !thread.isPinned)
+              }
+            >
+              {thread.isPinned ? "Unpin" : "Pin"}
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onSelect={() => void actions.setRead(thread.id, thread.isUnread)}
+            >
+              {thread.isUnread ? "Mark read" : "Mark unread"}
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            {projectGroups.length === 0 ? (
+              <DropdownMenuItem disabled>
+                No groups in this project
+              </DropdownMenuItem>
+            ) : (
+              projectGroups.map((group) => (
+                <DropdownMenuItem
+                  key={group.id}
+                  disabled={group.id === currentGroupId}
+                  onSelect={() =>
+                    onAssign(thread.id, thread.projectId, group.id)
+                  }
+                >
+                  Move to {groupLabel(group)}
+                </DropdownMenuItem>
+              ))
+            )}
+            {currentGroupId !== null ? (
+              <DropdownMenuItem
+                onSelect={() => onAssign(thread.id, thread.projectId, null)}
+              >
+                Remove from group
+              </DropdownMenuItem>
+            ) : null}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={() => actions.archive(thread.id)}>
+              Archive
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="text-destructive"
+              onSelect={() => actions.requestDelete(thread.id)}
+            >
+              Delete…
+            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
@@ -969,7 +944,9 @@ function CollapseHeader({
         >
           {children}
         </span>
-        <span className="shrink-0 text-xs text-muted-foreground/60">{count}</span>
+        <span className="shrink-0 text-xs text-muted-foreground/60">
+          {count}
+        </span>
       </button>
       {hasMenu ? (
         <DropdownMenu>
@@ -990,7 +967,9 @@ function CollapseHeader({
               </DropdownMenuItem>
             ) : null}
             {onNewGroup ? (
-              <DropdownMenuItem onSelect={onNewGroup}>New group</DropdownMenuItem>
+              <DropdownMenuItem onSelect={onNewGroup}>
+                New group
+              </DropdownMenuItem>
             ) : null}
           </DropdownMenuContent>
         </DropdownMenu>
@@ -999,7 +978,7 @@ function CollapseHeader({
   );
 }
 
-const COLLAPSE_KEY = "bb-plugin-thread-groups:collapsed";
+const COLLAPSE_KEY = "bb-plugin-antbar:collapsed";
 
 function loadCollapsed(): Set<string> {
   try {
@@ -1021,7 +1000,7 @@ function saveCollapsed(set: Set<string>) {
   }
 }
 
-function NestedSidebar({
+function AntBarSidebar({
   activeThreadId,
   onNavigate,
   searchQuery,
@@ -1032,11 +1011,14 @@ function NestedSidebar({
 
   const [groups, setGroups] = useState<Group[]>([]);
   const [membership, setMembership] = useState<Map<string, string>>(new Map());
-  const [collapsed, setCollapsed] = useState<Set<string>>(() => loadCollapsed());
-  // Drag-to-group state.
-  const [drag, setDrag] = useState<{ threadId: string; projectId: string } | null>(
-    null,
+  const [collapsed, setCollapsed] = useState<Set<string>>(() =>
+    loadCollapsed(),
   );
+  // Drag-to-group state.
+  const [drag, setDrag] = useState<{
+    threadId: string;
+    projectId: string;
+  } | null>(null);
   const [dragOverKey, setDragOverKey] = useState<string | null>(null);
   // Create-group dialog: the project id it targets, or null when closed.
   const [newGroupProject, setNewGroupProject] = useState<string | null>(null);
@@ -1048,14 +1030,16 @@ function NestedSidebar({
         membership: { threadId: string; groupId: string }[];
       };
       setGroups(data.groups);
-      setMembership(new Map(data.membership.map((m) => [m.threadId, m.groupId])));
+      setMembership(
+        new Map(data.membership.map((m) => [m.threadId, m.groupId])),
+      );
     });
   }, [rpc]);
 
   useEffect(() => {
     load();
   }, [load]);
-  useRealtime("groups:changed", load);
+  useRealtime("antbar:groups-changed", load);
 
   const assign = useCallback(
     (threadId: string, projectId: string, groupId: string | null) => {
@@ -1087,6 +1071,7 @@ function NestedSidebar({
   };
 
   const model = useMemo(() => {
+    const inbox = projectInbox(threads, query);
     const groupsByProject = new Map<string, Group[]>();
     for (const g of groups) {
       const list = groupsByProject.get(g.projectId) ?? [];
@@ -1094,31 +1079,97 @@ function NestedSidebar({
       groupsByProject.set(g.projectId, list);
     }
     const threadsByProject = new Map<string, PluginSidebarThread[]>();
-    for (const t of threads) {
-      if (t.isArchived) continue;
-      if (searching && !threadTitle(t).toLowerCase().includes(query)) continue;
+    for (const t of inbox.remaining) {
       const list = threadsByProject.get(t.projectId) ?? [];
       list.push(t);
       threadsByProject.set(t.projectId, list);
     }
-    return { groupsByProject, threadsByProject };
-  }, [groups, threads, searching, query]);
+    return { groupsByProject, threadsByProject, inbox: inbox.needsInput };
+  }, [groups, threads, query]);
 
   if (status === "loading") {
-    return <p className="p-3 text-sm text-muted-foreground">Loading threads…</p>;
+    return (
+      <p className="p-3 text-sm text-muted-foreground">Loading threads…</p>
+    );
   }
   if (status === "error") {
-    return <p className="p-3 text-sm text-destructive">Failed to load threads.</p>;
+    return (
+      <p className="p-3 text-sm text-destructive">Failed to load threads.</p>
+    );
   }
 
   const visibleProjects = projects.filter(
     (p) => (model.threadsByProject.get(p.id) ?? []).length > 0,
   );
 
+  const projectsById = new Map(
+    projects.map((project) => [project.id, project]),
+  );
+
   return (
     <>
       <div className="flex flex-col gap-2 px-2 py-2">
-        {visibleProjects.length === 0 ? (
+        <section
+          aria-labelledby="antbar-inbox-heading"
+          className="rounded-lg border border-primary/30 bg-primary/10 p-1"
+        >
+          <div className="flex h-7 items-center gap-1.5 px-2">
+            <Icon
+              name="CircleQuestion"
+              className="size-4 text-primary"
+              aria-hidden
+            />
+            <h2
+              id="antbar-inbox-heading"
+              className="min-w-0 flex-1 truncate text-sm font-medium"
+            >
+              Inbox
+            </h2>
+            <span
+              className="min-w-5 rounded-full bg-primary/15 px-1.5 text-center text-xs font-medium text-primary"
+              aria-label={`${model.inbox.length} threads need your input`}
+            >
+              {model.inbox.length}
+            </span>
+          </div>
+          {model.inbox.length === 0 ? (
+            <p className="px-2 py-1.5 text-xs text-muted-foreground">
+              {searching
+                ? "No matching threads need your input."
+                : "Nothing needs your input."}
+            </p>
+          ) : (
+            <div className="flex flex-col">
+              {model.inbox.map((thread) => {
+                const project = projectsById.get(thread.projectId);
+                return (
+                  <SidebarRow
+                    key={thread.id}
+                    thread={thread}
+                    active={thread.id === activeThreadId}
+                    projectName={
+                      project?.isPersonal ? "Personal" : project?.name
+                    }
+                    needsInput
+                    projectGroups={
+                      model.groupsByProject.get(thread.projectId) ?? []
+                    }
+                    currentGroupId={membership.get(thread.id) ?? null}
+                    actions={actions}
+                    onAssign={assign}
+                    onNavigate={onNavigate}
+                    onDragStart={(threadId, projectId) =>
+                      setDrag({ threadId, projectId })
+                    }
+                    onDragEnd={endDrag}
+                  />
+                );
+              })}
+            </div>
+          )}
+        </section>
+
+        {visibleProjects.length === 0 && model.inbox.length === 0 ? (
           <p className="p-3 text-sm text-muted-foreground">
             {searching ? "No threads match your search." : "No threads yet."}
           </p>
@@ -1141,7 +1192,10 @@ function NestedSidebar({
           // Ordered sections: defined groups (even empty, so they show as
           // drop targets) + Ungrouped last.
           const sections: { id: string | null; group: Group | null }[] = [
-            ...projectGroups.map((g) => ({ id: g.id as string | null, group: g })),
+            ...projectGroups.map((g) => ({
+              id: g.id as string | null,
+              group: g,
+            })),
             { id: null, group: null },
           ];
 
@@ -1177,7 +1231,8 @@ function NestedSidebar({
                       return null;
                     }
                     const groupKey = `grp:${project.id}:${section.id ?? "ungrouped"}`;
-                    const groupCollapsed = !searching && collapsed.has(groupKey);
+                    const groupCollapsed =
+                      !searching && collapsed.has(groupKey);
                     const label = section.group
                       ? groupLabel(section.group)
                       : "Ungrouped";
@@ -1188,7 +1243,9 @@ function NestedSidebar({
                         key={groupKey}
                         className={
                           "rounded-md " +
-                          (isDropTarget ? "bg-state-active ring-1 ring-primary/40" : "")
+                          (isDropTarget
+                            ? "bg-state-active ring-1 ring-primary/40"
+                            : "")
                         }
                         onDragOver={(e) => {
                           if (!canDrop) return;
@@ -1271,15 +1328,10 @@ export default definePluginApp((app) => {
     icon: "Columns",
     component: AssignTab,
   });
-  app.slots.experimental_threadHeaderAction({
-    id: "group-chip",
-    title: "Thread group",
-    component: GroupChip,
-  });
   app.slots.experimental_threadList({
-    id: "nested",
-    title: "Grouped by project",
-    description: "Threads nested under each project, then by your groups.",
-    component: NestedSidebar,
+    id: "antbar",
+    title: "AntBar",
+    description: "Attention Inbox, then threads nested by project and group.",
+    component: AntBarSidebar,
   });
 });

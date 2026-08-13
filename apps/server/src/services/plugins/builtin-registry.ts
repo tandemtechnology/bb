@@ -133,8 +133,8 @@ export const OFFICIAL_PLUGINS = [
     category: "Workflow management",
   },
   {
-    name: "thread-groups",
-    pluginId: "thread-groups",
+    name: "antbar",
+    pluginId: "antbar",
     defaultEnabled: true,
     category: "Workflow management",
   },

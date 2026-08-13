@@ -1,19 +1,21 @@
 {
-  "name": "bb-plugin-thread-groups",
+  "name": "bb-plugin-antbar",
   "version": "0.1.0",
-  "description": "Organize a project's threads into named groups, shown as a board and nested in the sidebar.",
+  "description": "AntBar combines an attention Inbox with named thread groups, a board, and thread filing tools.",
   "private": true,
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/tandemtechnology/bb.git",
-    "directory": "plugins/thread-groups"
+    "directory": "plugins/antbar"
   },
   "type": "module",
   "files": [
     "dist",
     "server.ts",
     "app.tsx",
+    "inbox.ts",
+    "migration.ts",
     "components",
     "lib",
     "hooks",
@@ -24,19 +26,21 @@
     "bbPluginSdk": "^0.4.1"
   },
   "bb": {
-    "name": "Thread Groups",
-    "description": "Organize a project's threads into named groups, shown as a board and nested in the sidebar.",
+    "name": "AntBar",
+    "description": "An attention Inbox above project and group organization, with a board and thread filing tools.",
     "branding": {
-      "icon": "Columns"
+      "icon": "PanelLeft"
     },
     "server": "./server.ts",
-    "app": "./app.tsx"
+    "app": "./app.tsx",
+    "skills": []
   },
   "keywords": [
     "bb-plugin"
   ],
   "scripts": {
-    "build": "node --conditions=source --import tsx ../../scripts/build-official-plugins.mjs thread-groups",
+    "build": "node --conditions=source --import tsx ../../scripts/build-official-plugins.mjs antbar",
+    "test": "node --experimental-strip-types --test inbox.test.ts migration.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {

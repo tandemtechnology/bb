@@ -6,6 +6,7 @@
     "moduleResolution": "bundler",
     "jsx": "react-jsx",
     "lib": ["ES2022", "DOM"],
+    "allowImportingTsExtensions": true,
     "noEmit": true,
     "skipLibCheck": true,
     "types": ["node"],
@@ -13,5 +14,15 @@
       "@/*": ["./*"]
     }
   },
-  "include": ["server.ts", "app.tsx", "components", "lib", "hooks"]
+  "include": [
+    "server.ts",
+    "app.tsx",
+    "inbox.ts",
+    "inbox.test.ts",
+    "migration.ts",
+    "migration.test.ts",
+    "components",
+    "lib",
+    "hooks"
+  ]
 }

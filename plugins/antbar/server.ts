@@ -1,9 +1,9 @@
-// bb-plugin-thread-groups — backend entry.
+// AntBar — backend entry.
 //
 // Organizes a project's threads into user-defined groups (kanban-style: one
 // group per thread). Groups + membership live in this plugin's own SQLite db;
 // threads are read live from the bb SDK. Every mutation is exposed over both
-// RPC (for the board UI) and the `bb thread-groups` CLI (for agents), and
+// RPC (for the board UI) and the `bb antbar` CLI (for agents), and
 // publishes a realtime signal so open boards refetch.
 import {
   defineRpcContract,
@@ -13,6 +13,7 @@ import {
 } from "@bb/plugin-sdk";
 import type BetterSqlite3 from "better-sqlite3";
 import { z } from "zod";
+import { migrateLegacyThreadGroups } from "./migration";
 
 // ---------------------------------------------------------------------------
 // Types + schemas
@@ -86,7 +87,10 @@ export const rpcContract = defineRpcContract({
   },
   reorderGroups: {
     input: z
-      .object({ projectId: projectIdSchema, orderedIds: z.array(groupIdSchema) })
+      .object({
+        projectId: projectIdSchema,
+        orderedIds: z.array(groupIdSchema),
+      })
       .strict(),
     output: z.object({ ok: z.literal(true) }).strict(),
   },
@@ -213,7 +217,7 @@ function makeGroupId(seed: number): string {
 // ---------------------------------------------------------------------------
 
 export default async function plugin(bb: BbPluginApi) {
-  bb.log.info("thread-groups loaded");
+  bb.log.info("AntBar loaded");
 
   const db = bb.storage.database();
   bb.storage.migrate(db, [
@@ -235,19 +239,36 @@ export default async function plugin(bb: BbPluginApi) {
     `CREATE INDEX IF NOT EXISTS idx_thread_group_group ON thread_group(group_id)`,
   ]);
 
+  const legacyMigration = migrateLegacyThreadGroups(db);
+  if (legacyMigration.status === "imported") {
+    bb.log.info(
+      `Imported ${legacyMigration.groups} group(s) and ${legacyMigration.memberships} membership(s) from thread-groups`,
+    );
+  } else if (legacyMigration.status === "incompatible") {
+    bb.log.warn(
+      "Skipped thread-groups data import because its database schema is incompatible",
+    );
+  }
+
   // Monotonic-ish counter for id generation (Date.now is unavailable in some
-  // harnesses; a persisted counter is deterministic and reload-safe).
+  // harnesses; a persisted counter is deterministic and reload-safe). AntBar
+  // owns a new kv namespace, so skip any IDs already imported from the legacy
+  // database instead of relying on its inaccessible counter.
   let idSeed = (await bb.storage.kv.get<number>("id-seed")) ?? 0;
   async function newId(): Promise<string> {
-    idSeed += 1;
+    let candidate: string;
+    do {
+      idSeed += 1;
+      candidate = makeGroupId(idSeed);
+    } while (getGroupRow(db, candidate));
     await bb.storage.kv.set("id-seed", idSeed);
-    return makeGroupId(idSeed);
+    return candidate;
   }
 
   function boardChanged(projectId: string) {
     bb.realtime.publish(`board:${projectId}`, { projectId });
     // Global channel for the cross-project sidebar (any project's change).
-    bb.realtime.publish("groups:changed", { projectId });
+    bb.realtime.publish("antbar:groups-changed", { projectId });
   }
 
   // Build the columns for a project: one per group (in order) + a trailing
@@ -257,7 +278,12 @@ export default async function plugin(bb: BbPluginApi) {
     const membership = membershipForProject(db, projectId);
     const threads = await bb.sdk.threads.list({ projectId, limit: 500 });
 
-    type Card = { id: string; title: string; status: string; updatedAt: number };
+    type Card = {
+      id: string;
+      title: string;
+      status: string;
+      updatedAt: number;
+    };
     const buckets = new Map<string | null, Card[]>();
     for (const group of groups) buckets.set(group.id, []);
     buckets.set(null, []);
@@ -344,7 +370,9 @@ export default async function plugin(bb: BbPluginApi) {
 
     assignThread({ threadId, projectId, groupId }) {
       if (groupId === null) {
-        db.prepare(`DELETE FROM thread_group WHERE thread_id = ?`).run(threadId);
+        db.prepare(`DELETE FROM thread_group WHERE thread_id = ?`).run(
+          threadId,
+        );
       } else {
         const group = getGroupRow(db, groupId);
         if (!group) throw new Error(`Unknown group ${groupId}`);
@@ -374,16 +402,17 @@ export default async function plugin(bb: BbPluginApi) {
           .all() as GroupRow[]
       ).map(rowToGroup);
       const membership = (
-        db
-          .prepare(`SELECT thread_id, group_id FROM thread_group`)
-          .all() as { thread_id: string; group_id: string }[]
+        db.prepare(`SELECT thread_id, group_id FROM thread_group`).all() as {
+          thread_id: string;
+          group_id: string;
+        }[]
       ).map((r) => ({ threadId: r.thread_id, groupId: r.group_id }));
       return { groups, membership };
     },
   });
 
   // -------------------------------------------------------------------------
-  // CLI: `bb thread-groups …` — the agent-facing surface, mirrors the RPCs.
+  // CLI: `bb antbar …` — the agent-facing surface, mirrors the RPCs.
   // -------------------------------------------------------------------------
 
   function readFlag(argv: string[], flag: string): string | undefined {
@@ -411,45 +440,45 @@ export default async function plugin(bb: BbPluginApi) {
   }
 
   const ROOT_HELP = [
-    "bb thread-groups — organize a project's threads into groups",
+    "bb antbar — organize a project's threads into groups",
     "",
-    "  bb thread-groups list [--project <id>]",
-    "  bb thread-groups create <name> [--project <id>] [--emoji <e>] [--color <token>]",
-    "  bb thread-groups rename <groupId> <name> [--emoji <e>] [--color <token>]",
-    "  bb thread-groups delete <groupId>",
-    "  bb thread-groups assign <threadId> <groupId|none> [--project <id>]",
+    "  bb antbar list [--project <id>]",
+    "  bb antbar create <name> [--project <id>] [--emoji <e>] [--color <token>]",
+    "  bb antbar rename <groupId> <name> [--emoji <e>] [--color <token>]",
+    "  bb antbar delete <groupId>",
+    "  bb antbar assign <threadId> <groupId|none> [--project <id>]",
   ].join("\n");
 
   bb.cli.register({
-    name: "thread-groups",
-    summary: "Organize a project's threads into named groups",
+    name: "antbar",
+    summary: "Manage AntBar thread groups",
     commands: [
       {
         name: "list",
         summary: "List groups in a project with thread counts",
-        usage: "bb thread-groups list [--project <id>]",
+        usage: "bb antbar list [--project <id>]",
       },
       {
         name: "create",
         summary: "Create a group",
         usage:
-          "bb thread-groups create <name> [--project <id>] [--emoji <e>] [--color <token>]",
+          "bb antbar create <name> [--project <id>] [--emoji <e>] [--color <token>]",
       },
       {
         name: "rename",
         summary: "Rename a group (and optionally set emoji/color)",
         usage:
-          "bb thread-groups rename <groupId> <name> [--emoji <e>] [--color <token>]",
+          "bb antbar rename <groupId> <name> [--emoji <e>] [--color <token>]",
       },
       {
         name: "delete",
         summary: "Delete a group (its threads fall back to Ungrouped)",
-        usage: "bb thread-groups delete <groupId>",
+        usage: "bb antbar delete <groupId>",
       },
       {
         name: "assign",
         summary: "Assign a thread to a group, or 'none' to unassign",
-        usage: "bb thread-groups assign <threadId> <groupId|none> [--project <id>]",
+        usage: "bb antbar assign <threadId> <groupId|none> [--project <id>]",
       },
     ],
     async run(argv, ctx): Promise<PluginCliResult> {
@@ -473,7 +502,7 @@ export default async function plugin(bb: BbPluginApi) {
             if (groups.length === 0) {
               return {
                 exitCode: 0,
-                stdout: `No groups in ${projectId}. Create one with: bb thread-groups create <name> --project ${projectId}`,
+                stdout: `No groups in ${projectId}. Create one with: bb antbar create <name> --project ${projectId}`,
               };
             }
             const counts = new Map(
@@ -500,7 +529,7 @@ export default async function plugin(bb: BbPluginApi) {
               };
             }
             if (!name) {
-              return { exitCode: 1, stderr: "Usage: bb thread-groups create <name>" };
+              return { exitCode: 1, stderr: "Usage: bb antbar create <name>" };
             }
             const id = await newId();
             const position = nextPosition(db, projectId);
@@ -519,7 +548,7 @@ export default async function plugin(bb: BbPluginApi) {
             if (!groupId || !name) {
               return {
                 exitCode: 1,
-                stderr: "Usage: bb thread-groups rename <groupId> <name>",
+                stderr: "Usage: bb antbar rename <groupId> <name>",
               };
             }
             const existing = getGroupRow(db, groupId);
@@ -540,7 +569,7 @@ export default async function plugin(bb: BbPluginApi) {
             if (!groupId) {
               return {
                 exitCode: 1,
-                stderr: "Usage: bb thread-groups delete <groupId>",
+                stderr: "Usage: bb antbar delete <groupId>",
               };
             }
             const existing = getGroupRow(db, groupId);
@@ -563,8 +592,7 @@ export default async function plugin(bb: BbPluginApi) {
             if (!threadId || !groupArg) {
               return {
                 exitCode: 1,
-                stderr:
-                  "Usage: bb thread-groups assign <threadId> <groupId|none>",
+                stderr: "Usage: bb antbar assign <threadId> <groupId|none>",
               };
             }
             if (groupArg === "none") {
@@ -614,6 +642,6 @@ export default async function plugin(bb: BbPluginApi) {
   });
 
   bb.onDispose(() => {
-    bb.log.info("thread-groups disposed");
+    bb.log.info("AntBar disposed");
   });
 }
