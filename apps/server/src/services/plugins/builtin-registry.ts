@@ -132,6 +132,12 @@ export const OFFICIAL_PLUGINS = [
     defaultEnabled: true,
     category: "Workflow management",
   },
+  {
+    name: "antbar",
+    pluginId: "antbar",
+    defaultEnabled: true,
+    category: "Workflow management",
+  },
 ].map(
   (plugin): BundledPluginDefinition => ({
     ...plugin,
