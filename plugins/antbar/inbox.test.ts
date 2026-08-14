@@ -39,7 +39,7 @@ function thread(
   };
 }
 
-test("promotes pending interactions without duplicating their rows", () => {
+test("adds pending interactions to Inbox while retaining grouped rows", () => {
   const waiting = thread({
     id: "waiting",
     hasPendingInteraction: true,
@@ -49,12 +49,31 @@ test("promotes pending interactions without duplicating their rows", () => {
   const result = projectInbox([ordinary, waiting], "");
 
   assert.deepEqual(
-    result.needsInput.map(({ id }) => id),
+    result.inbox.map(({ id }) => id),
     ["waiting"],
   );
   assert.deepEqual(
-    result.remaining.map(({ id }) => id),
-    ["ordinary"],
+    result.grouped.map(({ id }) => id),
+    ["ordinary", "waiting"],
+  );
+});
+
+test("adds unread threads to Inbox while retaining grouped rows", () => {
+  const unread = thread({
+    id: "unread",
+    isUnread: true,
+    indicator: "unread-success",
+  });
+  const ordinary = thread({ id: "ordinary" });
+  const result = projectInbox([ordinary, unread], "");
+
+  assert.deepEqual(
+    result.inbox.map(({ id }) => id),
+    ["unread"],
+  );
+  assert.deepEqual(
+    result.grouped.map(({ id }) => id),
+    ["ordinary", "unread"],
   );
 });
 
@@ -76,7 +95,7 @@ test("orders attention by recency", () => {
   );
 
   assert.deepEqual(
-    result.needsInput.map(({ id }) => id),
+    result.inbox.map(({ id }) => id),
     ["new-question", "old-question"],
   );
 });
@@ -88,13 +107,14 @@ test("promotes pending input even when an unread error owns the glyph", () => {
         id: "overlap",
         indicator: "unread-error",
         hasPendingInteraction: true,
+        isUnread: true,
       }),
     ],
     "",
   );
 
   assert.deepEqual(
-    result.needsInput.map(({ id }) => id),
+    result.inbox.map(({ id }) => id),
     ["overlap"],
   );
 });
@@ -110,7 +130,7 @@ test("searches the visible title and excludes archived threads", () => {
   );
 
   assert.deepEqual(
-    result.remaining.map(({ id }) => id),
+    result.grouped.map(({ id }) => id),
     ["match"],
   );
 });

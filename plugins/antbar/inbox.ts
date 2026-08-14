@@ -1,8 +1,8 @@
 import type { PluginSidebarThread } from "@bb/plugin-sdk";
 
 export interface InboxProjection {
-  needsInput: PluginSidebarThread[];
-  remaining: PluginSidebarThread[];
+  inbox: PluginSidebarThread[];
+  grouped: PluginSidebarThread[];
 }
 
 export function threadTitle(thread: PluginSidebarThread): string {
@@ -12,8 +12,8 @@ export function threadTitle(thread: PluginSidebarThread): string {
 }
 
 /**
- * Promotes every visible pending interaction into the Inbox. Promoted threads
- * are removed from the grouped tree so each thread has one keyboard target.
+ * Adds every visible unread thread or pending interaction to the Inbox while
+ * retaining the full visible set in its normal project/group hierarchy.
  */
 export function projectInbox(
   threads: readonly PluginSidebarThread[],
@@ -27,18 +27,17 @@ export function projectInbox(
         threadTitle(thread).toLocaleLowerCase().includes(query)),
   );
 
-  const needsInput = visible
-    .filter((thread) => thread.hasPendingInteraction)
+  const inbox = visible
+    .filter((thread) => thread.hasPendingInteraction || thread.isUnread)
     .sort(
       (left, right) =>
         right.latestAttentionAt - left.latestAttentionAt ||
         left.id.localeCompare(right.id),
     );
-  const waitingIds = new Set(needsInput.map((thread) => thread.id));
 
   return {
-    needsInput,
-    remaining: visible.filter((thread) => !waitingIds.has(thread.id)),
+    inbox,
+    grouped: visible,
   };
 }
 

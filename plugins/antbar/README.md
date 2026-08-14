@@ -4,9 +4,10 @@ AntBar is one BB sidebar provider with an attention Inbox first, followed by
 Project → Group → Thread organization. It also includes the Groups board and
 the `bb antbar` command for agents.
 
-A thread appears in Inbox when BB reports `hasPendingInteraction`. Inbox rows
-are removed from their normal group location while they need input, so there is
-one visible row and one keyboard target per thread.
+A thread appears in Inbox when it is unread or BB reports
+`hasPendingInteraction`. Inbox entries are lightweight shortcuts that open the
+session. Every session remains in its normal project and group, where its full
+row and controls live.
 
 ## Install and select
 
