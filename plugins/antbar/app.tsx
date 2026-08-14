@@ -744,6 +744,7 @@ function SidebarRow({
   active,
   projectName,
   needsInput = false,
+  canonicalKeyboardTarget = true,
   projectGroups,
   currentGroupId,
   actions,
@@ -756,6 +757,7 @@ function SidebarRow({
   active: boolean;
   projectName?: string;
   needsInput?: boolean;
+  canonicalKeyboardTarget?: boolean;
   projectGroups: Group[];
   currentGroupId: string | null;
   actions: ReturnType<typeof experimental_useSidebarThreadActions>;
@@ -791,10 +793,12 @@ function SidebarRow({
           : "text-foreground/85 hover:bg-state-hover")
       }
     >
-      {/* Anchor carries the keyboard DOM contract the host queries for. */}
+      {/* The grouped copy owns the keyboard DOM contract. */}
       <a
-        data-sidebar-thread-shortcut-target=""
-        data-sidebar-thread-id={thread.id}
+        data-sidebar-thread-shortcut-target={
+          canonicalKeyboardTarget ? "" : undefined
+        }
+        data-sidebar-thread-id={canonicalKeyboardTarget ? thread.id : undefined}
         tabIndex={0}
         role="button"
         onClick={open}
@@ -1079,12 +1083,12 @@ function AntBarSidebar({
       groupsByProject.set(g.projectId, list);
     }
     const threadsByProject = new Map<string, PluginSidebarThread[]>();
-    for (const t of inbox.remaining) {
+    for (const t of inbox.grouped) {
       const list = threadsByProject.get(t.projectId) ?? [];
       list.push(t);
       threadsByProject.set(t.projectId, list);
     }
-    return { groupsByProject, threadsByProject, inbox: inbox.needsInput };
+    return { groupsByProject, threadsByProject, inbox: inbox.inbox };
   }, [groups, threads, query]);
 
   if (status === "loading") {
@@ -1114,11 +1118,7 @@ function AntBarSidebar({
           className="rounded-lg border border-primary/30 bg-primary/10 p-1"
         >
           <div className="flex h-7 items-center gap-1.5 px-2">
-            <Icon
-              name="CircleQuestion"
-              className="size-4 text-primary"
-              aria-hidden
-            />
+            <Icon name="Mail" className="size-4 text-primary" aria-hidden />
             <h2
               id="antbar-inbox-heading"
               className="min-w-0 flex-1 truncate text-sm font-medium"
@@ -1127,7 +1127,7 @@ function AntBarSidebar({
             </h2>
             <span
               className="min-w-5 rounded-full bg-primary/15 px-1.5 text-center text-xs font-medium text-primary"
-              aria-label={`${model.inbox.length} threads need your input`}
+              aria-label={`${model.inbox.length} threads need your attention`}
             >
               {model.inbox.length}
             </span>
@@ -1135,8 +1135,8 @@ function AntBarSidebar({
           {model.inbox.length === 0 ? (
             <p className="px-2 py-1.5 text-xs text-muted-foreground">
               {searching
-                ? "No matching threads need your input."
-                : "Nothing needs your input."}
+                ? "No matching threads need your attention."
+                : "Nothing needs your attention."}
             </p>
           ) : (
             <div className="flex flex-col">
@@ -1150,7 +1150,8 @@ function AntBarSidebar({
                     projectName={
                       project?.isPersonal ? "Personal" : project?.name
                     }
-                    needsInput
+                    needsInput={thread.hasPendingInteraction}
+                    canonicalKeyboardTarget={false}
                     projectGroups={
                       model.groupsByProject.get(thread.projectId) ?? []
                     }
