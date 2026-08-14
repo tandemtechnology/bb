@@ -739,12 +739,60 @@ function StatusGlyph({
   return null;
 }
 
-function SidebarRow({
+function InboxShortcut({
   thread,
   active,
   projectName,
-  needsInput = false,
-  canonicalKeyboardTarget = true,
+  actions,
+  onNavigate,
+}: {
+  thread: PluginSidebarThread;
+  active: boolean;
+  projectName?: string;
+  actions: ReturnType<typeof experimental_useSidebarThreadActions>;
+  onNavigate: () => void;
+}) {
+  const open = () => {
+    actions.open(thread.id);
+    onNavigate();
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={open}
+      className={
+        "group/inbox flex h-7 w-full items-center gap-1.5 rounded-md px-2 text-left text-sm transition-colors " +
+        (active
+          ? "bg-state-active text-foreground"
+          : "text-foreground/85 hover:bg-state-hover")
+      }
+      title={`Open ${threadTitle(thread)}`}
+    >
+      <span className="flex size-4 shrink-0 items-center justify-center">
+        <StatusGlyph
+          thread={thread}
+          needsInput={thread.hasPendingInteraction}
+        />
+      </span>
+      <span className="min-w-0 flex-1 truncate">{threadTitle(thread)}</span>
+      {projectName ? (
+        <span className="max-w-20 shrink-0 truncate text-xs text-muted-foreground">
+          {projectName}
+        </span>
+      ) : null}
+      <Icon
+        name="ChevronRight"
+        className="size-3 shrink-0 text-muted-foreground/60 transition-transform group-hover/inbox:translate-x-0.5"
+        aria-hidden
+      />
+    </button>
+  );
+}
+
+function SidebarRow({
+  thread,
+  active,
   projectGroups,
   currentGroupId,
   actions,
@@ -755,9 +803,6 @@ function SidebarRow({
 }: {
   thread: PluginSidebarThread;
   active: boolean;
-  projectName?: string;
-  needsInput?: boolean;
-  canonicalKeyboardTarget?: boolean;
   projectGroups: Group[];
   currentGroupId: string | null;
   actions: ReturnType<typeof experimental_useSidebarThreadActions>;
@@ -793,12 +838,10 @@ function SidebarRow({
           : "text-foreground/85 hover:bg-state-hover")
       }
     >
-      {/* The grouped copy owns the keyboard DOM contract. */}
+      {/* The grouped row owns bb's keyboard DOM contract. */}
       <a
-        data-sidebar-thread-shortcut-target={
-          canonicalKeyboardTarget ? "" : undefined
-        }
-        data-sidebar-thread-id={canonicalKeyboardTarget ? thread.id : undefined}
+        data-sidebar-thread-shortcut-target=""
+        data-sidebar-thread-id={thread.id}
         tabIndex={0}
         role="button"
         onClick={open}
@@ -819,15 +862,10 @@ function SidebarRow({
           />
         ) : null}
         <span className="min-w-0 flex-1 truncate">{threadTitle(thread)}</span>
-        {projectName ? (
-          <span className="max-w-20 shrink-0 truncate text-xs text-muted-foreground">
-            {projectName}
-          </span>
-        ) : null}
       </a>
       <div className="flex shrink-0 items-center gap-0.5 pr-1">
         <span className="flex size-4 items-center justify-center group-hover/row:hidden">
-          <StatusGlyph thread={thread} needsInput={needsInput} />
+          <StatusGlyph thread={thread} />
         </span>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -1143,26 +1181,15 @@ function AntBarSidebar({
               {model.inbox.map((thread) => {
                 const project = projectsById.get(thread.projectId);
                 return (
-                  <SidebarRow
+                  <InboxShortcut
                     key={thread.id}
                     thread={thread}
                     active={thread.id === activeThreadId}
                     projectName={
                       project?.isPersonal ? "Personal" : project?.name
                     }
-                    needsInput={thread.hasPendingInteraction}
-                    canonicalKeyboardTarget={false}
-                    projectGroups={
-                      model.groupsByProject.get(thread.projectId) ?? []
-                    }
-                    currentGroupId={membership.get(thread.id) ?? null}
                     actions={actions}
-                    onAssign={assign}
                     onNavigate={onNavigate}
-                    onDragStart={(threadId, projectId) =>
-                      setDrag({ threadId, projectId })
-                    }
-                    onDragEnd={endDrag}
                   />
                 );
               })}

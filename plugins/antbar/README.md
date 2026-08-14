@@ -5,9 +5,9 @@ Project → Group → Thread organization. It also includes the Groups board and
 the `bb antbar` command for agents.
 
 A thread appears in Inbox when it is unread or BB reports
-`hasPendingInteraction`. Inbox is an additional attention view: every session
-also remains in its normal project and group, whose row stays the canonical
-keyboard-shortcut target.
+`hasPendingInteraction`. Inbox entries are lightweight shortcuts that open the
+session. Every session remains in its normal project and group, where its full
+row and controls live.
 
 ## Install and select
 
