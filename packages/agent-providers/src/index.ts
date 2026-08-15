@@ -6,6 +6,7 @@ export {
 } from "./claude-code-models.js";
 export type { ClaudeCodeCatalogEntry } from "./claude-code-models.js";
 export {
+  ACP_DEFAULT_MODEL_ID,
   agentProviderIdSchema,
   buildAcpProviderInfo,
   getAcpProviderServerCapabilities,

@@ -373,6 +373,8 @@ Example:
         "MY_AGENT_MODE": "bb"
       },
       "cwd": "/Users/me/project",
+      "modelDiscovery": "none",
+      "mcpServers": "none",
       "modelCli": {
         "listArgs": ["--list-models"],
         "selectFlag": "--model",
@@ -412,6 +414,17 @@ resolve from the bb data directory (for example,
 `~/.bb/agent-logos/my-agent.svg`); absolute paths are also supported. bb serves
 the file to app clients and uses it in provider and model pickers. Omit `logo`
 to use the built-in brand icon for a known ACP agent or the generic ACP icon.
+
+`modelDiscovery` is optional. Set it to `"none"` for gateway-style ACP
+agents that manage model selection internally and do not advertise a model
+catalog. bb then shows one provider-named selector immediately and does not
+launch the agent merely to populate the picker. The agent still launches
+normally when a thread starts.
+
+`mcpServers` is optional. Set it to `"none"` for gateway agents that reject
+per-session MCP servers and provide their own native tools. bb then omits its
+dynamic plugin tools and their tool-specific instructions from that ACP session.
+The gateway agent's native tools are unaffected.
 
 `modelCli` is optional. When present, `listArgs` are used to ask the agent for
 models, `selectFlag` is the flag bb passes when launching with a selected model,

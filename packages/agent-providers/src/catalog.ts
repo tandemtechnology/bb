@@ -22,6 +22,13 @@ const ACP_AGENT_PROVIDER_ID_VALUES = [
 export type AcpAgentProviderId = (typeof ACP_AGENT_PROVIDER_ID_VALUES)[number];
 const ACP_PROVIDER_ID_PREFIX = "acp-";
 
+/**
+ * Reserved model id for an ACP agent that manages model selection internally.
+ * The server replaces its generic bridge label with the provider display name
+ * before exposing execution options to user-facing selectors.
+ */
+export const ACP_DEFAULT_MODEL_ID = "acp-default";
+
 export function isAcpAgentProviderId(
   value: string,
 ): value is AcpAgentProviderId {

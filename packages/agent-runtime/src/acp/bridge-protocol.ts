@@ -17,6 +17,7 @@ import {
   reasoningLevelSchema,
   serviceTierSchema,
 } from "@bb/domain";
+import { ACP_DEFAULT_MODEL_ID } from "@bb/agent-providers";
 import { z } from "zod";
 import {
   acpPermissionOptionSchema,
@@ -37,15 +38,9 @@ export const acpBridgeAgentCommandSchema = z.object({
 });
 export type AcpBridgeAgentCommand = z.infer<typeof acpBridgeAgentCommandSchema>;
 
-/**
- * Id of the synthetic "Agent default" model the bridge serves when the agent's
- * model list cannot be read. Never forwarded to the agent.
- */
-export const ACP_DEFAULT_MODEL_ID = "acp-default";
+export { ACP_DEFAULT_MODEL_ID };
 
-export type AcpBridgeReasoningCli = z.infer<
-  typeof acpBridgeReasoningCliSchema
->;
+export type AcpBridgeReasoningCli = z.infer<typeof acpBridgeReasoningCliSchema>;
 
 export type AcpBridgeNativeReasoning = z.infer<
   typeof acpBridgeNativeReasoningSchema

@@ -254,6 +254,55 @@ describe("thread runtime config", () => {
     );
   });
 
+  it("omits BB dynamic tools when a custom ACP agent disables per-session MCP servers", async () => {
+    await withTestHarness(
+      {
+        customAcpAgents: [
+          {
+            id: "gateway",
+            displayName: "Gateway ACP",
+            command: "gateway-agent",
+            args: [],
+            env: {},
+            mcpServers: "none",
+          },
+        ],
+      },
+      async (harness) => {
+        const { host } = seedHostSession(harness.deps, {
+          id: "host-runtime-gateway-acp",
+        });
+        const { project } = seedProjectWithSource(harness.deps, {
+          hostId: host.id,
+        });
+        const environment = seedEnvironment(harness.deps, {
+          hostId: host.id,
+          projectId: project.id,
+          path: "/tmp/gateway-acp",
+        });
+        const thread = seedThread(harness.deps, {
+          projectId: project.id,
+          environmentId: environment.id,
+          providerId: "acp-gateway",
+        });
+
+        const runtimeConfig = await resolveThreadRuntimeCommandConfig(
+          harness.deps,
+          {
+            environment,
+            model: "acp-default",
+            thread,
+          },
+        );
+
+        expect(runtimeConfig.dynamicTools).toEqual([]);
+        expect(runtimeConfig.instructions).not.toContain(
+          "update_environment_directory",
+        );
+      },
+    );
+  });
+
   it.each([
     {
       expectedSpec: {

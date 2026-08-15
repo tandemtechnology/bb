@@ -1,3 +1,4 @@
+import { formatCustomAcpAgentProviderId } from "@bb/config/bb-app-managed-config";
 import { getEnvironment, getHost, getProject } from "@bb/db";
 import type {
   DynamicTool,
@@ -235,9 +236,14 @@ export async function resolveThreadRuntimeCommandConfig(
     deps.logger,
     deps.config.dataDir,
   );
-  const dynamicToolContributions = resolveDynamicTools(
-    conditionalConfiguration.tools,
+  const customAcpAgent = deps.config.customAcpAgents.find(
+    (agent) =>
+      formatCustomAcpAgentProviderId(agent.id) === args.thread.providerId,
   );
+  const dynamicToolContributions =
+    customAcpAgent?.mcpServers === "none"
+      ? []
+      : resolveDynamicTools(conditionalConfiguration.tools);
   const dynamicTools = dynamicToolContributions.map(
     (contribution) => contribution.tool,
   );

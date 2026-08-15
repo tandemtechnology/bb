@@ -72,6 +72,60 @@ describe("bbAppManagedConfigSchema", () => {
     expect(formatCustomAcpAgentProviderId("my-agent")).toBe("acp-my-agent");
   });
 
+  it("keeps explicit custom ACP gateway policies", () => {
+    const parsed = bbAppManagedConfigSchema.parse({
+      customAcpAgents: [
+        {
+          id: "gateway-agent",
+          displayName: "Gateway Agent",
+          command: "gateway-agent",
+          modelDiscovery: "none",
+          mcpServers: "none",
+        },
+      ],
+    });
+
+    expect(parsed.customAcpAgents?.[0]).toEqual({
+      id: "gateway-agent",
+      displayName: "Gateway Agent",
+      command: "gateway-agent",
+      args: [],
+      env: {},
+      modelDiscovery: "none",
+      mcpServers: "none",
+    });
+  });
+
+  it("rejects unsupported custom ACP model discovery modes", () => {
+    const parsed = bbAppManagedConfigSchema.safeParse({
+      customAcpAgents: [
+        {
+          id: "gateway-agent",
+          displayName: "Gateway Agent",
+          command: "gateway-agent",
+          modelDiscovery: "slow",
+        },
+      ],
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+
+  it("rejects unsupported custom ACP MCP server policies", () => {
+    const parsed = bbAppManagedConfigSchema.safeParse({
+      customAcpAgents: [
+        {
+          id: "gateway-agent",
+          displayName: "Gateway Agent",
+          command: "gateway-agent",
+          mcpServers: "gateway",
+        },
+      ],
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+
   it("keeps non-empty custom ACP modelCli config", () => {
     const parsed = bbAppManagedConfigSchema.parse({
       customAcpAgents: [

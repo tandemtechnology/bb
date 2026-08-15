@@ -1044,8 +1044,8 @@ describe("host-daemon command schemas", () => {
   // daemon on 89 rejects those commands as invalid-message and would
   // reconnect-loop rather than run threads, so the bump is what moves an
   // enrolled machine onto a build that understands the field.
-  it("uses protocol version 90 for project environment variables", () => {
-    expect(HOST_DAEMON_PROTOCOL_VERSION).toBe(90);
+  it("uses protocol version 91 for custom ACP MCP server policy", () => {
+    expect(HOST_DAEMON_PROTOCOL_VERSION).toBe(91);
   });
 
   it("binds Plan cancellation to a required turn id and typed result", () => {
