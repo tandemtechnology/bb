@@ -375,6 +375,7 @@ Example:
       "cwd": "/Users/me/project",
       "modelDiscovery": "none",
       "mcpServers": "none",
+      "agentContext": "none",
       "modelCli": {
         "listArgs": ["--list-models"],
         "selectFlag": "--model",
@@ -425,6 +426,12 @@ normally when a thread starts.
 per-session MCP servers and provide their own native tools. bb then omits its
 dynamic plugin tools and their tool-specific instructions from that ACP session.
 The gateway agent's native tools are unaffected.
+
+`agentContext` is optional. Set it to `"none"` for gateway agents that run in
+an isolated environment without access to the bb host filesystem or CLI. bb
+then omits its host-only standard, plugin, user, and workspace instructions and
+does not inject host skill paths into the ACP session. The gateway agent's
+native instructions and skills are unaffected.
 
 `modelCli` is optional. When present, `listArgs` are used to ask the agent for
 models, `selectFlag` is the flag bb passes when launching with a selected model,

@@ -148,7 +148,7 @@ You can still use the Pi CLI and `/login` to create this configuration.
 
 Custom ACP agents can be configured through `customAcpAgents` in
 `~/.bb/config.json`; see the configuration docs for optional
-`modelDiscovery`, `mcpServers`, `modelCli`, and `reasoningCli` or
+`modelDiscovery`, `mcpServers`, `agentContext`, `modelCli`, and `reasoningCli` or
 `nativeReasoning` reasoning
 settings. A `logo`
 field accepts an SVG, PNG, or WebP path for the provider picker icon.

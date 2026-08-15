@@ -182,17 +182,25 @@ export async function resolveThreadRuntimeCommandConfig(
     throw new ApiError(404, "host_not_found", "Host not found");
   }
 
+  const customAcpAgent = deps.config.customAcpAgents.find(
+    (agent) =>
+      formatCustomAcpAgentProviderId(agent.id) === args.thread.providerId,
+  );
+  const includesHostAgentContext = customAcpAgent?.agentContext !== "none";
   const { workspaceProvisionType } = args.environment;
-  const [projectSkillSources, workspaceAgentInstructions] = await Promise.all([
-    resolveWorkspaceProjectSkills(deps, {
-      hostId: args.environment.hostId,
-      workspacePath,
-    }),
-    readWorkspaceAgentInstructions(deps, {
-      hostId: args.environment.hostId,
-      workspacePath,
-    }),
-  ]);
+  const [projectSkillSources, workspaceAgentInstructions] =
+    includesHostAgentContext
+      ? await Promise.all([
+          resolveWorkspaceProjectSkills(deps, {
+            hostId: args.environment.hostId,
+            workspacePath,
+          }),
+          readWorkspaceAgentInstructions(deps, {
+            hostId: args.environment.hostId,
+            workspacePath,
+          }),
+        ])
+      : [[], null];
   const pluginSkillRoots = getPluginSkillRootContributions();
   const skillIdsByPlugin = discoverPluginSkillIds(deps.logger, {
     pluginSkillRoots,
@@ -228,18 +236,16 @@ export async function resolveThreadRuntimeCommandConfig(
     },
     skillIdsByPlugin,
   });
-  const injectedSkillSources = resolveSkillCatalogSources(deps, {
-    projectSkillSources,
-    pluginSkillSelections: conditionalConfiguration.selectedSkillIdsByPlugin,
-  });
-  const dataDirAgentInstructions = readDataDirAgentInstructions(
-    deps.logger,
-    deps.config.dataDir,
-  );
-  const customAcpAgent = deps.config.customAcpAgents.find(
-    (agent) =>
-      formatCustomAcpAgentProviderId(agent.id) === args.thread.providerId,
-  );
+  const injectedSkillSources = includesHostAgentContext
+    ? resolveSkillCatalogSources(deps, {
+        projectSkillSources,
+        pluginSkillSelections:
+          conditionalConfiguration.selectedSkillIdsByPlugin,
+      })
+    : [];
+  const dataDirAgentInstructions = includesHostAgentContext
+    ? readDataDirAgentInstructions(deps.logger, deps.config.dataDir)
+    : null;
   const dynamicToolContributions =
     customAcpAgent?.mcpServers === "none"
       ? []
@@ -247,11 +253,16 @@ export async function resolveThreadRuntimeCommandConfig(
   const dynamicTools = dynamicToolContributions.map(
     (contribution) => contribution.tool,
   );
-  const instructionSections = [STANDARD_AGENT_INSTRUCTIONS];
+  const instructionSections = includesHostAgentContext
+    ? [STANDARD_AGENT_INSTRUCTIONS]
+    : [];
+  const dynamicToolInstructionContributions = includesHostAgentContext
+    ? dynamicToolContributions
+    : [];
   // Per-tool instructions: each dynamic tool carries its own snippet (the
   // built-in update_environment_directory guidance is one of them; plugin
   // tools are description-only unless they registered a snippet).
-  for (const contribution of dynamicToolContributions) {
+  for (const contribution of dynamicToolInstructionContributions) {
     if (!contribution.instructions) continue;
     if (contribution.pluginId === null) {
       instructionSections.push(contribution.instructions);
@@ -264,7 +275,9 @@ export async function resolveThreadRuntimeCommandConfig(
   }
   // Legacy plugin-level contributeInstructions providers (after per-tool
   // snippets, before configure dynamic instructions).
-  for (const contribution of listPluginInstructionContributions()) {
+  for (const contribution of includesHostAgentContext
+    ? listPluginInstructionContributions()
+    : []) {
     let text: string | null;
     try {
       text = contribution.provider({
@@ -295,19 +308,21 @@ export async function resolveThreadRuntimeCommandConfig(
   // providers on every thread, including side chats. Each configure output
   // was already validated and capped by the plugin service;
   // user/data-dir/workspace instructions still follow.
-  for (const contribution of conditionalConfiguration.dynamicInstructions) {
+  for (const contribution of includesHostAgentContext
+    ? conditionalConfiguration.dynamicInstructions
+    : []) {
     instructionSections.push(
       `The following dynamic instructions come from the BB plugin "${contribution.pluginId}":`,
       contribution.text,
     );
   }
-  if (dataDirAgentInstructions) {
+  if (includesHostAgentContext && dataDirAgentInstructions) {
     instructionSections.push(
       `The following user instructions come from <dataDir>/${DATA_DIR_AGENT_INSTRUCTIONS_RELATIVE_PATH}:`,
       dataDirAgentInstructions,
     );
   }
-  if (workspaceAgentInstructions) {
+  if (includesHostAgentContext && workspaceAgentInstructions) {
     instructionSections.push(
       `The following workspace instructions come from ${WORKSPACE_AGENT_INSTRUCTIONS_RELATIVE_PATH}:`,
       workspaceAgentInstructions,

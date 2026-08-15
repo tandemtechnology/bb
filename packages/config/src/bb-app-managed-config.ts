@@ -95,6 +95,7 @@ export const customAcpAgentSchema = z
     cwd: z.string().min(1).optional(),
     modelDiscovery: z.literal("none").optional(),
     mcpServers: z.literal("none").optional(),
+    agentContext: z.literal("none").optional(),
     modelCli: customAcpAgentModelCliSchema.optional(),
     reasoningCli: acpReasoningCliSchema.optional(),
     nativeReasoning: acpNativeReasoningSchema.optional(),

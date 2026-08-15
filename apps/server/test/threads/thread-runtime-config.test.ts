@@ -303,6 +303,53 @@ describe("thread runtime config", () => {
     );
   });
 
+  it("omits host-only instructions and skills when a custom ACP agent disables agent context", async () => {
+    await withTestHarness(
+      {
+        customAcpAgents: [
+          {
+            id: "gateway",
+            displayName: "Gateway ACP",
+            command: "gateway-agent",
+            args: [],
+            env: {},
+            agentContext: "none",
+          },
+        ],
+      },
+      async (harness) => {
+        const { host } = seedHostSession(harness.deps, {
+          id: "host-runtime-gateway-agent-context",
+        });
+        const { project } = seedProjectWithSource(harness.deps, {
+          hostId: host.id,
+        });
+        const environment = seedEnvironment(harness.deps, {
+          hostId: host.id,
+          projectId: project.id,
+          path: "/tmp/gateway-agent-context",
+        });
+        const thread = seedThread(harness.deps, {
+          projectId: project.id,
+          environmentId: environment.id,
+          providerId: "acp-gateway",
+        });
+
+        const runtimeConfig = await resolveThreadRuntimeCommandConfig(
+          harness.deps,
+          {
+            environment,
+            model: "acp-default",
+            thread,
+          },
+        );
+
+        expect(runtimeConfig.injectedSkillSources).toEqual([]);
+        expect(runtimeConfig.instructions).toBe("");
+      },
+    );
+  });
+
   it.each([
     {
       expectedSpec: {

@@ -81,6 +81,7 @@ describe("bbAppManagedConfigSchema", () => {
           command: "gateway-agent",
           modelDiscovery: "none",
           mcpServers: "none",
+          agentContext: "none",
         },
       ],
     });
@@ -93,6 +94,7 @@ describe("bbAppManagedConfigSchema", () => {
       env: {},
       modelDiscovery: "none",
       mcpServers: "none",
+      agentContext: "none",
     });
   });
 
@@ -119,6 +121,21 @@ describe("bbAppManagedConfigSchema", () => {
           displayName: "Gateway Agent",
           command: "gateway-agent",
           mcpServers: "gateway",
+        },
+      ],
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+
+  it("rejects unsupported custom ACP agent context policies", () => {
+    const parsed = bbAppManagedConfigSchema.safeParse({
+      customAcpAgents: [
+        {
+          id: "gateway-agent",
+          displayName: "Gateway Agent",
+          command: "gateway-agent",
+          agentContext: "gateway",
         },
       ],
     });

@@ -307,7 +307,9 @@ environment pull-request show <id>`. Diff commands require an explicit target
   relative paths resolve from the bb data dir. Set `modelDiscovery` to
   `"none"` for gateway agents that manage their own model and should not be
   launched merely to populate the picker. Set `mcpServers` to `"none"` when a
-  gateway rejects per-session MCP servers and provides its own native tools.
+  gateway rejects per-session MCP servers and provides its own native tools. Set
+  `agentContext` to `"none"` when the gateway cannot access the bb host filesystem
+  or CLI; bb then omits host-only instructions and injected skills.
   Custom ACP agents can use `modelCli`
   for CLI model listing/selection, `reasoningCli` for launch-time
   reasoning flags, and `nativeReasoning` for ACP `session/set_config_option`
