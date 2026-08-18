@@ -80,7 +80,13 @@ Custom ACP agents are configured in the app data-dir config.json under
 customAcpAgents. bb derives provider id acp-<id> from each slug id. Edit the JSON
 and run bb-app config refresh; there is no set/unset CLI surface for this list.
 Custom config wins if it uses the same provider id as a known ACP agent; for
-example, override acp-opencode with id opencode. Use modelCli for CLI model
-listing/selection, reasoningCli for launch-time reasoning flags, and
-nativeReasoning for ACP session/set_config_option reasoning. Optional logo
+example, override acp-opencode with id opencode. Set modelDiscovery to none
+for gateway agents that manage their own model and should not be launched for
+picker discovery. Set mcpServers to none when a gateway rejects per-session MCP
+servers and provides its own native tools. Set agentContext to none when a gateway
+runs without access to the bb host filesystem or CLI; bb then omits host-only
+instructions and injected skills. Use modelCli for CLI
+model listing/selection, reasoningCli for
+launch-time reasoning flags, and nativeReasoning for ACP
+session/set_config_option reasoning. Optional logo
 accepts an SVG, PNG, or WebP path; relative paths resolve from the bb data dir.

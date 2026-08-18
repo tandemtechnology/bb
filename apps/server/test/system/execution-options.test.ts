@@ -1,3 +1,4 @@
+import { ACP_DEFAULT_MODEL_ID } from "@bb/agent-providers";
 import { describe, expect, it, vi } from "vitest";
 import {
   appendCustomModels,
@@ -951,6 +952,51 @@ describe("resolveSystemExecutionOptions", () => {
             },
           },
         });
+      },
+    );
+  });
+
+  it("skips model discovery and names the synthetic model for a configured ACP gateway", async () => {
+    await withTestHarness(
+      {
+        customAcpAgents: [
+          {
+            id: "example-agent",
+            displayName: "Example Agent",
+            command: "example-agent",
+            args: ["acp"],
+            env: {},
+            modelDiscovery: "none",
+          },
+        ],
+      },
+      async (harness) => {
+        const { host, session } = seedHostSession(harness.deps, {
+          id: "host-execution-options-no-acp-discovery",
+        });
+        const responder = registerProviderHostRpcResponder(harness, {
+          hostId: host.id,
+          sessionId: session.id,
+        });
+
+        const response = await resolveSystemExecutionOptions(harness.deps, {
+          hostId: host.id,
+          providerId: "acp-example-agent",
+        });
+
+        expect(response.models).toEqual([
+          expect.objectContaining({
+            id: ACP_DEFAULT_MODEL_ID,
+            model: ACP_DEFAULT_MODEL_ID,
+            displayName: "Example Agent",
+            isDefault: true,
+          }),
+        ]);
+        expect(response.selectedOnlyModels).toEqual([]);
+        expect(response.modelLoadError).toBeNull();
+        expect(
+          responder.requests.map((request) => request.command.type),
+        ).toEqual(["known_acp_agents.status"]);
       },
     );
   });
