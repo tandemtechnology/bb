@@ -1027,6 +1027,46 @@ describe("resolveSystemExecutionOptions", () => {
     );
   });
 
+  it("skips model discovery for a configured ACP gateway", async () => {
+    await withTestHarness(
+      {
+        customAcpAgents: [{
+          id: "gateway",
+          displayName: "Gateway Agent",
+          command: "gateway-agent",
+          args: ["acp"],
+          env: {},
+          modelDiscovery: "none",
+          supportsManualCompaction: false,
+        }],
+      },
+      async (harness) => {
+        const { host, session } = seedHostSession(harness.deps, {
+          id: "host-execution-options-gateway",
+        });
+        const responder = registerProviderHostRpcResponder(harness, {
+          hostId: host.id,
+          sessionId: session.id,
+        });
+        const response = await resolveSystemExecutionOptions(harness.deps, {
+          hostId: host.id,
+          providerId: "acp-gateway",
+        });
+        expect(response.models).toEqual([
+          expect.objectContaining({
+            id: "acp-default",
+            displayName: "Gateway Agent",
+            isDefault: true,
+          }),
+        ]);
+        expect(response.modelLoadError).toBeNull();
+        expect(
+          responder.requests.map((request) => request.command.type),
+        ).toEqual(["known_acp_agents.status"]);
+      },
+    );
+  });
+
   // The HTTP listener deliberately starts serving before plugins load, and
   // providers now exist only while their plugin is loaded, so a request that
   // lands in that window must wait instead of reporting no providers at all.

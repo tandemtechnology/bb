@@ -693,6 +693,25 @@ describe("buildCodexConfig", () => {
     });
   });
 
+  it("lets explicit environment unsets win over set values", () => {
+    expect(
+      configFor({
+        ...FULL_OPTIONS,
+        envVars: { ANTHROPIC_API_KEY: "shadow" },
+        envUnset: ["ANTHROPIC_API_KEY"],
+      }),
+    ).toMatchObject({
+      "shell_environment_policy.unset.ANTHROPIC_API_KEY": "1",
+    });
+    expect(
+      configFor({
+        ...FULL_OPTIONS,
+        envVars: { ANTHROPIC_API_KEY: "shadow" },
+        envUnset: ["ANTHROPIC_API_KEY"],
+      })?.["shell_environment_policy.set.ANTHROPIC_API_KEY"],
+    ).toBeUndefined();
+  });
+
   it("maps the reasoning level onto model_reasoning_effort", () => {
     expect(
       configFor({ ...FULL_OPTIONS, reasoningLevel: "high" }),

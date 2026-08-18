@@ -5,7 +5,11 @@ import type {
   SystemExecutionOptionsResponse,
   SystemProvidersQuery,
 } from "@bb/server-contract";
-import { buildAcpProviderInfo } from "../providers/acp-provider-tier.js";
+import {
+  ACP_DEFAULT_MODEL_ID,
+  buildAcpProviderInfo,
+  isAcpProviderId,
+} from "../providers/acp-provider-tier.js";
 import { listClaudeCodeFallbackModels } from "./claude-code-fallback-models.js";
 import {
   formatCustomAcpAgentProviderId,
@@ -97,6 +101,33 @@ interface ResolveSystemProviderInfosPlanResult extends Omit<
   "providers"
 > {
   providersPromise: Promise<ProviderInfo[]>;
+}
+
+function buildSyntheticAcpDefaultModel(provider: ProviderInfo): AvailableModel {
+  return {
+    id: ACP_DEFAULT_MODEL_ID,
+    model: ACP_DEFAULT_MODEL_ID,
+    displayName: provider.displayName,
+    description: "Model selection is managed by the connected ACP agent.",
+    supportedReasoningEfforts: [{
+      reasoningEffort: "medium",
+      description: "Reasoning effort is managed by the connected ACP agent.",
+    }],
+    defaultReasoningEffort: "medium",
+    isDefault: true,
+  };
+}
+
+function labelSyntheticAcpDefaultModel(
+  provider: ProviderInfo,
+  models: AvailableModel[],
+): AvailableModel[] {
+  if (!isAcpProviderId(provider.id)) return models;
+  return models.map((model) =>
+    model.model === ACP_DEFAULT_MODEL_ID
+      ? { ...model, displayName: provider.displayName }
+      : model,
+  );
 }
 
 function buildCustomAcpProviderInfo(agent: CustomAcpAgent): ProviderInfo {
@@ -573,6 +604,13 @@ async function loadSystemProviderModels(
     customAcpAgent === undefined
       ? findKnownAcpAgentForProviderId(provider.id)
       : undefined;
+  if (customAcpAgent?.modelDiscovery === "none") {
+    return {
+      models: [buildSyntheticAcpDefaultModel(provider)],
+      selectedOnlyModels: [],
+      modelLoadError: null,
+    };
+  }
   const bridgeLaunch = requireBridgeLaunchForProviderId(deps, provider.id);
   try {
     const { models, selectedOnlyModels } = await callHostRetryableOnlineRpc(
@@ -599,7 +637,7 @@ async function loadSystemProviderModels(
       },
     );
     return {
-      models,
+      models: labelSyntheticAcpDefaultModel(provider, models),
       selectedOnlyModels,
       modelLoadError: null,
     };

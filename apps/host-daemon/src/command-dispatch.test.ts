@@ -1196,6 +1196,7 @@ describe("dispatchCommand", () => {
       instructions: "Be concise.",
       dynamicTools: [],
       injectedSkillSources: [],
+      projectEnvVars: {},
       instructionMode: "append",
     };
     const supportedCodexStatus: ProviderCliStatus = {

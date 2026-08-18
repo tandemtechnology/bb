@@ -41,6 +41,7 @@ export type CodexSessionOptions = {
   providerSubagentsEnabled?: boolean;
   instructions?: string;
   envVars?: Record<string, string>;
+  envUnset?: readonly string[];
 } & RuntimePermissionPolicy;
 
 interface CodexPermissionSettings {
@@ -627,6 +628,7 @@ export function toCodexUserInput(input: PromptInput[]): CodexUserInput[] {
  */
 function buildShellEnvironmentPolicyConfig(
   envVars?: Record<string, string>,
+  envUnset?: readonly string[],
 ): Record<string, string> | undefined {
   if (!envVars) {
     return undefined;
@@ -634,6 +636,12 @@ function buildShellEnvironmentPolicyConfig(
   const config: Record<string, string> = {};
   for (const [key, value] of Object.entries(buildShellEnvOverrides(envVars))) {
     config[`shell_environment_policy.set.${key}`] = value;
+  }
+  for (const key of envUnset ?? []) {
+    const safe = buildShellEnvOverrides({ [key]: "1" });
+    if (safe[key] !== "1") continue;
+    delete config[`shell_environment_policy.set.${key}`];
+    config[`shell_environment_policy.unset.${key}`] = "1";
   }
   return Object.keys(config).length > 0 ? config : undefined;
 }
@@ -647,6 +655,7 @@ export function buildCodexConfig(
   }
   const shellEnvironmentConfig = buildShellEnvironmentPolicyConfig(
     args.options?.envVars,
+    args.options?.envUnset,
   );
   if (shellEnvironmentConfig) {
     Object.assign(config, shellEnvironmentConfig);

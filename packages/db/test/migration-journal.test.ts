@@ -85,13 +85,12 @@ describe("migration journal integrity", () => {
   // telling drizzle-kit where to continue numbering.
   it("has `idx` values matching array position for upstream migrations", () => {
     const { entries } = readJournal();
-
+    const upstreamEntries = entries.filter(
+      (entry) => entry.idx < FORK_MIGRATION_IDX_START,
+    );
     const mismatches: string[] = [];
-    for (let i = 0; i < entries.length; i++) {
-      const entry = entries[i];
-      if (entry.idx >= FORK_MIGRATION_IDX_START) {
-        continue;
-      }
+    for (let i = 0; i < upstreamEntries.length; i++) {
+      const entry = upstreamEntries[i];
       if (entry.idx !== i) {
         mismatches.push(
           `entries[${i}] ${entry.tag} has idx=${entry.idx}, expected ${i}`,
@@ -102,23 +101,15 @@ describe("migration journal integrity", () => {
     expect(mismatches).toEqual([]);
   });
 
-  it("keeps fork migrations in one block at the end of the journal", () => {
-    // Ordering is by `when`, so an upstream entry after the fork block would
-    // still apply correctly — but it would make the journal much harder to read
-    // and the next rebase harder to reason about.
+  it("keeps fork migrations in timestamp order with upstream migrations", () => {
+    // A fork migration keeps its reserved idx but must remain in timestamp
+    // order. Drizzle walks the journal and skips entries older than the latest
+    // applied timestamp, so moving a fork entry to the end would strand it on a
+    // fresh database once newer upstream entries exist.
     const { entries } = readJournal();
-    const firstForkIndex = entries.findIndex(
-      (entry) => entry.idx >= FORK_MIGRATION_IDX_START,
+    expect(entries.map((entry) => entry.when)).toEqual(
+      entries.map((entry) => entry.when).sort((a, b) => a - b),
     );
-    if (firstForkIndex === -1) {
-      return;
-    }
-    expect(
-      entries
-        .slice(firstForkIndex)
-        .filter((entry) => entry.idx < FORK_MIGRATION_IDX_START)
-        .map((entry) => entry.tag),
-    ).toEqual([]);
   });
 
   it("has a matching .sql file for every journal entry", () => {
@@ -187,12 +178,15 @@ describe("migration journal integrity", () => {
     expect(missing).toEqual([]);
   });
 
-  it("has an unbroken snapshot prevId chain in journal order", () => {
-    const entries = [...readJournal().entries].sort((a, b) => a.idx - b.idx);
+  it("has valid upstream and fork snapshot ancestry", () => {
+    const entries = readJournal().entries;
+    const upstreamEntries = entries.filter(
+      (entry) => entry.idx < FORK_MIGRATION_IDX_START,
+    );
 
     const violations: string[] = [];
     let previousSnapshotId: string | null = null;
-    for (const entry of entries) {
+    for (const entry of upstreamEntries) {
       const snapshot = readSnapshot(entry.idx);
       if (previousSnapshotId !== null && snapshot.prevId !== previousSnapshotId) {
         violations.push(
@@ -200,6 +194,24 @@ describe("migration journal integrity", () => {
         );
       }
       previousSnapshotId = snapshot.id;
+    }
+
+    const snapshotsById = new Map(
+      entries.map((entry) => {
+        const snapshot = readSnapshot(entry.idx);
+        return [snapshot.id, { entry, snapshot }] as const;
+      }),
+    );
+    for (const entry of entries.filter(
+      (candidate) => candidate.idx >= FORK_MIGRATION_IDX_START,
+    )) {
+      const snapshot = readSnapshot(entry.idx);
+      const parent = snapshotsById.get(snapshot.prevId);
+      if (parent === undefined || parent.entry.when >= entry.when) {
+        violations.push(
+          `${entry.tag} snapshot prevId=${snapshot.prevId} is not an earlier journal snapshot`,
+        );
+      }
     }
 
     expect(violations).toEqual([]);

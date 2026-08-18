@@ -80,6 +80,41 @@ const FULL_POLICY = {
 } satisfies RuntimePermissionPolicy;
 
 describe("buildClaudeSessionParams", () => {
+  it("carries Fable account binding into the bridge config", () => {
+    const params = buildClaudeSessionParams({
+      threadId: "thread-fable",
+      cwd: "/tmp/worktree",
+      instructionMode: "append",
+      options: {
+        ...FULL_POLICY,
+        model: "claude-fable-5",
+        envVars: { BB_THREAD_ID: "thread-fable" },
+        providerOptions: {
+          claudeCodeMockCliTraffic:
+            DEFAULT_CLAUDE_CODE_MOCK_CLI_TRAFFIC_CONFIG,
+          workflowsEnabled: false,
+        },
+      },
+    });
+    const config = params.config as {
+      envVars: Record<string, string>;
+      envUnset: string[];
+    };
+    expect(config.envVars.CLAUDE_CONFIG_DIR).toContain(".claude-fable");
+    expect(config.envVars.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS).toBe("1");
+    expect(config.envVars.BB_THREAD_ID).toBe("thread-fable");
+    expect(config.envUnset).toEqual(
+      expect.arrayContaining([
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_AUTH_TOKEN",
+        "CLAUDE_CODE_USE_VERTEX",
+        "CLAUDE_CODE_USE_BEDROCK",
+        "CLOUD_ML_REGION",
+        "ANTHROPIC_VERTEX_PROJECT_ID",
+      ]),
+    );
+  });
+
   it("maps every claude-flavored knob out of the providerOptions bag", () => {
     const params = buildClaudeSessionParams({
       threadId: "thread-1",

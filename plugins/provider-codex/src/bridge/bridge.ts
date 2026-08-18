@@ -430,6 +430,7 @@ const codexProviderOptionsSchema = z
   .object({
     memoryEnabled: z.boolean().optional(),
     providerSubagentsEnabled: z.boolean().optional(),
+    envUnset: z.array(z.string()).optional(),
     /**
      * Environment-level extra write roots. Rides the opaque provider-options
      * bag (packed by the registry) because the canonical wire has no core
@@ -459,6 +460,7 @@ function decodeCodexOptions(
       ...(decoded.providerSubagentsEnabled !== undefined
         ? { providerSubagentsEnabled: decoded.providerSubagentsEnabled }
         : {}),
+      ...(decoded.envUnset !== undefined ? { envUnset: decoded.envUnset } : {}),
     },
     additionalWorkspaceWriteRoots: decoded.additionalWorkspaceWriteRoots ?? [],
   };

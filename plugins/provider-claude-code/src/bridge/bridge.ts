@@ -1421,14 +1421,18 @@ async function closeClaudeThreadSession(
  *   segment, matching the CLI. The delete also clears any value inherited from a
  *   parent SDK process.
  */
-function buildSessionEnv(
-  envOverrides: Record<string, string>,
-): NodeJS.ProcessEnv {
+interface SessionEnvPolicy {
+  set: Record<string, string>;
+  unset: readonly string[];
+}
+
+function buildSessionEnv(envPolicy: SessionEnvPolicy): NodeJS.ProcessEnv {
   const sessionEnv: NodeJS.ProcessEnv = {
     ...withoutBridgeRuntimeEnv(process.env),
-    ...envOverrides,
+    ...envPolicy.set,
     CLAUDE_CODE_ENTRYPOINT: "cli",
   };
+  for (const key of envPolicy.unset) delete sessionEnv[key];
   delete sessionEnv.CLAUDE_AGENT_SDK_CLIENT_APP;
   return sessionEnv;
 }
@@ -1446,22 +1450,27 @@ function appendNoProxyLoopback(value: string | undefined): string {
 }
 
 const sessionConfigEnvVarsSchema = z.record(z.string(), z.string());
+const sessionConfigEnvUnsetSchema = z.array(z.string());
 
 /** The bridge end of `buildClaudeCodeConfig`'s plugin-internal config bag. */
-function readConfigEnvOverrides(
+function readConfigEnvPolicy(
   config: Record<string, unknown> | undefined,
-): Record<string, string> {
-  const parsed = sessionConfigEnvVarsSchema.safeParse(config?.["envVars"]);
-  return parsed.success ? parsed.data : {};
+): SessionEnvPolicy {
+  const set = sessionConfigEnvVarsSchema.safeParse(config?.["envVars"]);
+  const unset = sessionConfigEnvUnsetSchema.safeParse(config?.["envUnset"]);
+  return {
+    set: set.success ? set.data : {},
+    unset: unset.success ? unset.data : [],
+  };
 }
 
 async function prepareSessionEnv(
   params: PrepareSessionEnvParams,
 ): Promise<PreparedSessionEnv> {
-  const envOverrides = readConfigEnvOverrides(params.config);
+  const envPolicy = readConfigEnvPolicy(params.config);
   if (!params.claudeCodeMockCliTraffic.enabled) {
     return {
-      env: buildSessionEnv(envOverrides),
+      env: buildSessionEnv(envPolicy),
       mockCliTrafficProxy: null,
     };
   }
@@ -1472,14 +1481,17 @@ async function prepareSessionEnv(
   });
   return {
     env: buildSessionEnv({
-      ...envOverrides,
-      ANTHROPIC_BASE_URL: mockCliTrafficProxy.baseUrl,
-      NO_PROXY: appendNoProxyLoopback(
-        envOverrides.NO_PROXY ?? process.env.NO_PROXY,
-      ),
-      no_proxy: appendNoProxyLoopback(
-        envOverrides.no_proxy ?? process.env.no_proxy,
-      ),
+      set: {
+        ...envPolicy.set,
+        ANTHROPIC_BASE_URL: mockCliTrafficProxy.baseUrl,
+        NO_PROXY: appendNoProxyLoopback(
+          envPolicy.set.NO_PROXY ?? process.env.NO_PROXY,
+        ),
+        no_proxy: appendNoProxyLoopback(
+          envPolicy.set.no_proxy ?? process.env.no_proxy,
+        ),
+      },
+      unset: envPolicy.unset,
     }),
     mockCliTrafficProxy,
   };

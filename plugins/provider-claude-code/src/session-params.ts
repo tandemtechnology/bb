@@ -18,10 +18,16 @@ import {
   buildShellEnvOverrides,
 } from "@get-bb/plugin-sdk/provider-bridge";
 import { z } from "zod";
+import { homedir } from "node:os";
 import {
   toClaudePermissionMode,
   type ClaudePermissionMode,
 } from "./interactive-contract.js";
+import {
+  FABLE_CONFIG_DIR_ENV_VAR,
+  isFableModel,
+  resolveClaudeAccountEnv,
+} from "./account-binding.js";
 
 interface AdditionalWorkspaceWriteRootsParams {
   additionalWorkspaceWriteRoots: string[];
@@ -93,13 +99,26 @@ function buildClaudeSkillConfigParams(
  * bridge's own `envVars` key — filtered through the shared name-safety guard.
  */
 function buildClaudeCodeConfig(
-  envVars?: Record<string, string>,
+  options: ClaudeSessionExecutionOptions,
 ): Record<string, unknown> | undefined {
-  if (!envVars) {
-    return undefined;
+  const accountEnv = resolveClaudeAccountEnv({
+    env: process.env,
+    homeDir: homedir(),
+    model: options.model,
+  });
+  if (accountEnv === undefined && isFableModel(options.model)) {
+    throw new Error(
+      `Model "${options.model}" requires a dedicated Claude account, but its config directory could not be resolved. Set ${FABLE_CONFIG_DIR_ENV_VAR} on the host daemon.`,
+    );
   }
-  const overrides = buildShellEnvOverrides(envVars);
-  return Object.keys(overrides).length > 0 ? { envVars: overrides } : undefined;
+  const envVars = buildShellEnvOverrides({
+    ...options.envVars,
+    ...accountEnv?.set,
+  });
+  const envUnset = [...(options.envUnset ?? []), ...(accountEnv?.unset ?? [])];
+  return Object.keys(envVars).length > 0 || envUnset.length > 0
+    ? { envVars, envUnset }
+    : undefined;
 }
 
 /**
@@ -113,6 +132,7 @@ export type ClaudeSessionExecutionOptions = RuntimePermissionPolicy & {
   reasoningLevel?: ReasoningLevel | undefined;
   instructions?: string | undefined;
   envVars?: Record<string, string> | undefined;
+  envUnset?: readonly string[] | undefined;
   claudeCodePermissionMode?: "plan" | undefined;
   claudeCodeMockCliTraffic: ClaudeCodeMockCliTrafficConfig;
   workflowsEnabled: boolean;
@@ -145,7 +165,7 @@ function buildInternalSessionParams(
   args: BuildInternalSessionParamsArgs,
 ): Record<string, unknown> {
   const baseInstructions = args.options.instructions ?? "";
-  const config = buildClaudeCodeConfig(args.options.envVars);
+  const config = buildClaudeCodeConfig(args.options);
   const dynamicTools = args.dynamicTools?.map((t) => ({
     name: t.name,
     description: t.description,
@@ -204,6 +224,7 @@ const claudeProviderOptionsSchema = z
     workflowsEnabled: z.boolean().optional(),
     memoryEnabled: z.boolean().optional(),
     providerSubagentsEnabled: z.boolean().optional(),
+    envUnset: z.array(z.string()).optional(),
     /**
      * Environment-level extra write roots. Rides the opaque provider-options
      * bag (packed by the registry) because the canonical wire has no core
@@ -275,6 +296,7 @@ export function buildClaudeSessionParams(
       workflowsEnabled: providerOptions.workflowsEnabled ?? false,
       memoryEnabled: providerOptions.memoryEnabled,
       providerSubagentsEnabled: providerOptions.providerSubagentsEnabled,
+      envUnset: providerOptions.envUnset,
     },
   });
 }

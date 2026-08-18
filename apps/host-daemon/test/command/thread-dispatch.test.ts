@@ -422,6 +422,7 @@ describe("thread command dispatch", () => {
         instructions: "Be a helpful coding agent.",
         dynamicTools: [],
         injectedSkillSources: [],
+        projectEnvVars: {},
         instructionMode: "append",
       },
       {
@@ -584,6 +585,7 @@ describe("thread command dispatch", () => {
           instructions: "Be a helpful coding agent.",
           dynamicTools: [],
           injectedSkillSources: [],
+          projectEnvVars: {},
           instructionMode: "append",
         },
         target: { mode: "start" },

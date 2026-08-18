@@ -534,6 +534,43 @@ function isDuplicateClaudeModelFallback(
   );
 }
 
+const CLAUDE_DENIED_TOOL_INPUT_MAX_LENGTH = 600;
+
+function truncateClaudeDeniedToolInput(text: string): string {
+  const collapsed = text.trim();
+  return collapsed.length > CLAUDE_DENIED_TOOL_INPUT_MAX_LENGTH
+    ? `${collapsed.slice(0, CLAUDE_DENIED_TOOL_INPUT_MAX_LENGTH)}…`
+    : collapsed;
+}
+
+function describeClaudeDeniedToolInput(
+  item: ThreadEventItem | undefined,
+): string | null {
+  if (!item) return null;
+  switch (item.type) {
+    case "commandExecution":
+      return truncateClaudeDeniedToolInput(item.command) || null;
+    case "fileChange": {
+      const paths = item.changes.map((change) => change.path).filter(Boolean);
+      return paths.length > 0
+        ? truncateClaudeDeniedToolInput(paths.join(", "))
+        : null;
+    }
+    case "webFetch":
+      return truncateClaudeDeniedToolInput(item.url) || null;
+    case "webSearch":
+      return truncateClaudeDeniedToolInput(item.queries.join(", ")) || null;
+    case "imageView":
+      return truncateClaudeDeniedToolInput(item.path) || null;
+    case "toolCall":
+      return item.arguments
+        ? truncateClaudeDeniedToolInput(JSON.stringify(item.arguments))
+        : null;
+    default:
+      return null;
+  }
+}
+
 function buildClaudeProviderErrorEvent(
   args: BuildClaudeProviderErrorEventArgs,
 ): ThreadEvent {
@@ -1083,6 +1120,12 @@ export function createClaudeEventTranslator(
         if (permissionDeniedMessage.success) {
           const message = permissionDeniedMessage.data;
           const reason = message.decision_reason ?? message.message;
+          const reasonLine = message.decision_reason_type
+            ? `${reason} (${message.decision_reason_type})`
+            : reason;
+          const deniedInput = describeClaudeDeniedToolInput(
+            state.toolItemsByCallId.get(message.tool_use_id),
+          );
           events.push({
             type: "provider/warning",
             threadId,
@@ -1092,9 +1135,9 @@ export function createClaudeEventTranslator(
               : threadScope(),
             category: "general",
             summary: `${message.tool_name} was denied automatically`,
-            details: message.decision_reason_type
-              ? `${reason} (${message.decision_reason_type})`
-              : reason,
+            details: deniedInput
+              ? `${reasonLine}\n\n${message.tool_name} input:\n${deniedInput}`
+              : reasonLine,
           });
           return events;
         }

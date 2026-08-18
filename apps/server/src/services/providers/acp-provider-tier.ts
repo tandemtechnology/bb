@@ -31,6 +31,9 @@ import type {
 } from "@bb/domain";
 import type { ProviderServerCapabilities } from "./provider-registry.js";
 
+/** Synthetic model used when an ACP gateway owns model selection. */
+export const ACP_DEFAULT_MODEL_ID = "acp-default";
+
 /**
  * The whole tier's client-facing capabilities. Exported because the registry's
  * ACP fallbacks are capability questions, not `ProviderInfo` questions: they

@@ -2317,6 +2317,52 @@ describe("bridge", () => {
     }
   });
 
+  it("removes environment variables requested by session policy", async () => {
+    const bridge = createBridgeJsonRpcTestHarness(handleLine);
+    const query = createControlledClaudeQuery();
+    queryMock.mockReturnValue(query);
+    const originalKey = process.env.ANTHROPIC_API_KEY;
+    process.env.ANTHROPIC_API_KEY = "inherited-secret";
+    try {
+      bridge.sendRequest(1, "thread/start", {
+        threadId: "thread-env-unset",
+        cwd: "/tmp/worktree",
+        instructionMode: "append",
+        options: {
+          permissionMode: "accept-edits",
+          permissionScope: "workspace",
+          approvalReviewer: "user",
+          permissionEscalation: "ask",
+          instructions: "test",
+          envVars: { BB_TEST: "1" },
+          providerOptions: {
+            envUnset: ["ANTHROPIC_API_KEY"],
+            workflowsEnabled: false,
+            claudeCodeMockCliTraffic:
+              DEFAULT_CLAUDE_CODE_MOCK_CLI_TRAFFIC_CONFIG,
+          },
+        },
+      });
+      await bridge.waitForResponse(1);
+      const queryOptions = getLatestQueryOptions();
+      expect(queryOptions.env?.BB_TEST).toBe("1");
+      expect(queryOptions.env?.ANTHROPIC_API_KEY).toBeUndefined();
+      bridge.sendRequest(2, "thread/stop", {
+        threadId: "thread-env-unset",
+        providerThreadId: "thread-env-unset",
+        intent: "interrupt",
+        activeTurnId: null,
+      });
+      await bridge.flushWork();
+      query.finish();
+      await bridge.waitForResponse(2);
+    } finally {
+      if (originalKey === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = originalKey;
+      bridge.restore();
+    }
+  });
+
   it("includes captured Claude stderr when the SDK stream fails", async () => {
     const bridge = createBridgeJsonRpcTestHarness(handleLine);
     const queries: ControlledClaudeQuery[] = [];
