@@ -11,7 +11,6 @@ import type {
   ThreadOriginKind,
   ThreadVisibility,
 } from "@bb/domain";
-import { supportsNativeFork } from "@bb/agent-providers";
 import type { BaseBranchSpec, UnmanagedBranchSpec } from "@bb/server-contract";
 import type { LoggedPendingInteractionWorkSessionDeps } from "../../types.js";
 import { COMMAND_TIMEOUT_MS } from "../../constants.js";
@@ -157,7 +156,7 @@ async function resolveCatalogExecutionDefaults(
       true,
     );
   }
-  return buildProviderThreadExecutionDefaults({
+  return buildProviderThreadExecutionDefaults(deps.providerRegistry, {
     providerId: args.providerId,
     model: defaultModel.model,
   });
@@ -177,13 +176,18 @@ async function resolveCatalogExecutionDefaults(
  * thread as an unforkable error rather than a silent fresh start.
  */
 function resolveForkDescriptor(
-  deps: Pick<ThreadCreateDeps, "db">,
+  deps: Pick<ThreadCreateDeps, "db" | "providerRegistry">,
   args: ResolveForkDescriptorArgs,
 ): ThreadForkDescriptor | null {
   if (args.originKind === null || args.sourceThread === null) {
     return null;
   }
-  if (!supportsNativeFork(args.providerId)) {
+  if (!deps.providerRegistry.supportsFork(args.providerId)) {
+    return null;
+  }
+  // A provider session ID is opaque to every other provider, so a fork is
+  // possible only when the source and the child use the same provider.
+  if (args.sourceThread.providerId !== args.providerId) {
     return null;
   }
   const sourceProviderThreadId =
@@ -617,7 +621,7 @@ export async function createThreadFromRequest(
     ...rawRequestInput,
     environment:
       rawRequestInput.environment.type === "project-default"
-        ? resolveProjectDefaultThreadEnvironment(deps, {
+        ? await resolveProjectDefaultThreadEnvironment(deps, {
             projectId: rawRequestInput.projectId,
           })
         : rawRequestInput.environment,
@@ -633,8 +637,7 @@ export async function createThreadFromRequest(
     requestInput.input = [...requestInput.input, ...pluginMentionContext];
   }
   assertProjectWorkspaceCompatibility(project, requestInput);
-  const originKind =
-    requestInput.originKind ?? requestInput.childOrigin ?? null;
+  const originKind = requestInput.originKind ?? null;
   const sourceThreadId =
     requestInput.sourceThreadId ??
     (originKind !== null ? requestInput.parentThreadId : undefined);
@@ -728,6 +731,10 @@ export async function createThreadFromRequest(
     input: requestInput.input,
     projectId: requestInput.projectId,
   });
+  // Providers register with plugin startup, which the listener does not wait
+  // for: without this, a thread created on boot sees an empty registry and
+  // fails with "no provider available".
+  await deps.providerRegistry.whenRegistrationsSettled();
   const { executionDefaults, providerId, requestedModel } =
     resolveProjectExecutionDefaultsForCreate(deps, {
       executionInputSources: requestInput.executionInputSources,
@@ -736,7 +743,6 @@ export async function createThreadFromRequest(
       providerId: requestInput.providerId,
     });
   const {
-    childOrigin: _requestedChildOrigin,
     originKind: _requestedOriginKind,
     parentThreadId: _requestedParentThreadId,
     sourceThreadId: _requestedSourceThreadId,
@@ -749,7 +755,6 @@ export async function createThreadFromRequest(
       : {}),
     ...(sourceThread ? { sourceThreadId: sourceThread.id } : {}),
     originKind,
-    childOrigin: originKind,
     visibility: resolveCreateThreadVisibility({
       parentThread,
       requestedVisibility: requestInput.visibility,

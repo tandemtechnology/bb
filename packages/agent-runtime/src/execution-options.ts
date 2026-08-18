@@ -1,17 +1,17 @@
 import type { ProviderAdapter } from "./provider-adapter.js";
 import type {
+  ClassifyProviderExecutionSettingsChangeArgs,
+  ProviderExecutionSettingsChange,
+} from "./provider-adapter.js";
+import type {
   AgentRuntimeExecutionOptions,
   AgentRuntimeSkillRoot,
 } from "./types.js";
 import type { ProviderExecutionContext } from "./provider-adapter.js";
-import { DEFAULT_CLAUDE_CODE_MOCK_CLI_TRAFFIC_CONFIG } from "@bb/domain";
-import { homedir } from "node:os";
-import { resolveAdapterPermissionPolicy } from "./shared/permission-policy.js";
 import {
-  FABLE_CONFIG_DIR_ENV_VAR,
-  isFableModel,
-  resolveClaudeAccountEnv,
-} from "./claude-code/account-binding.js";
+  DEFAULT_CLAUDE_CODE_MOCK_CLI_TRAFFIC_CONFIG,
+  type RuntimePermissionPolicy,
+} from "@bb/domain";
 
 interface AssertProviderSupportsExecutionOptionsArgs {
   adapter: ProviderAdapter;
@@ -45,7 +45,7 @@ export function assertProviderSupportsExecutionOptions(
   }
 
   if (
-    !args.adapter.capabilities.supportedPermissionModes.includes(
+    !args.adapter.capabilities.permissionModes.includes(
       args.options.permissionMode,
     )
   ) {
@@ -92,22 +92,71 @@ export function sameExecutionSettings(
   );
 }
 
+export function classifySessionExecutionSettingsChange(
+  args: ClassifyProviderExecutionSettingsChangeArgs,
+): ProviderExecutionSettingsChange {
+  return sameExecutionSettings({ left: args.current, right: args.next })
+    ? "unchanged"
+    : "session";
+}
+
+function sameClaudeSessionSettings(
+  args: ClassifyProviderExecutionSettingsChangeArgs,
+): boolean {
+  const currentMockCliTraffic =
+    args.current.claudeCodeMockCliTraffic ??
+    DEFAULT_CLAUDE_CODE_MOCK_CLI_TRAFFIC_CONFIG;
+  const nextMockCliTraffic =
+    args.next.claudeCodeMockCliTraffic ??
+    DEFAULT_CLAUDE_CODE_MOCK_CLI_TRAFFIC_CONFIG;
+  return (
+    args.current.claudeCodePermissionMode ===
+      args.next.claudeCodePermissionMode &&
+    currentMockCliTraffic.enabled === nextMockCliTraffic.enabled &&
+    currentMockCliTraffic.endpoint === nextMockCliTraffic.endpoint &&
+    args.current.permissionMode === args.next.permissionMode &&
+    args.current.permissionScope === args.next.permissionScope &&
+    args.current.approvalReviewer === args.next.approvalReviewer
+  );
+}
+
+function sameClaudeLiveSettings(
+  args: ClassifyProviderExecutionSettingsChangeArgs,
+): boolean {
+  return (
+    args.current.model === args.next.model &&
+    args.current.reasoningLevel === args.next.reasoningLevel &&
+    args.current.workflowsEnabled === args.next.workflowsEnabled &&
+    (args.current.memoryEnabled ?? true) ===
+      (args.next.memoryEnabled ?? true) &&
+    (args.current.providerSubagentsEnabled ?? true) ===
+      (args.next.providerSubagentsEnabled ?? true) &&
+    args.current.permissionEscalation === args.next.permissionEscalation
+  );
+}
+
+export function classifyClaudeExecutionSettingsChange(
+  args: ClassifyProviderExecutionSettingsChangeArgs,
+): ProviderExecutionSettingsChange {
+  if (!sameClaudeSessionSettings(args)) {
+    return "session";
+  }
+  return sameClaudeLiveSettings(args) ? "unchanged" : "live";
+}
+
+export function normalizeClaudeExecutionOptions(
+  options: AgentRuntimeExecutionOptions,
+): AgentRuntimeExecutionOptions {
+  if (options.serviceTier !== "fast") {
+    return options;
+  }
+  return { ...options, serviceTier: "default" };
+}
+
 export function toProviderExecutionContext(
   args: ToProviderExecutionContextArgs,
 ): ProviderExecutionContext {
-  const permissionPolicy = resolveAdapterPermissionPolicy(args.execOpts);
-  const accountEnv = resolveClaudeAccountEnv({
-    env: process.env,
-    homeDir: homedir(),
-    model: args.execOpts.model,
-  });
-  if (accountEnv === undefined && isFableModel(args.execOpts.model)) {
-    // Falling back to the default account would run a Fable session against the
-    // wrong Anthropic org, so refuse instead. See account-binding.ts.
-    throw new Error(
-      `Model "${args.execOpts.model}" requires a dedicated Claude account, but its config directory could not be resolved. Set ${FABLE_CONFIG_DIR_ENV_VAR} on the host daemon.`,
-    );
-  }
+  const permissionPolicy: RuntimePermissionPolicy = args.execOpts;
   return {
     model: args.execOpts.model,
     serviceTier: args.execOpts.serviceTier,
@@ -123,10 +172,7 @@ export function toProviderExecutionContext(
     providerSubagentsEnabled: args.execOpts.providerSubagentsEnabled,
     ...permissionPolicy,
     instructions: args.instructions,
-    // The account binding wins over caller-supplied vars: it is a compliance
-    // boundary, not a default.
-    envVars: { ...args.envVars, ...(accountEnv?.set ?? {}) },
-    ...(accountEnv ? { envUnset: accountEnv.unset } : {}),
+    envVars: args.envVars,
     ...(args.skillRoots && args.skillRoots.length > 0
       ? { skillRoots: args.skillRoots }
       : {}),

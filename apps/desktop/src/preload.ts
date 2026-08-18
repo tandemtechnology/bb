@@ -15,6 +15,7 @@ import {
   type BbDesktopBrowserSnapshotHandler,
   type BbDesktopBrowserStateHandler,
   type BbDesktopBrowserUnsubscribe,
+  type BbDesktopBrowserViewBounds,
   type BbDesktopCloseWindowRequestHandler,
   type BbDesktopInfo,
   type BbDesktopInfoChangeHandler,
@@ -59,6 +60,7 @@ import {
   BB_DESKTOP_SPELLCHECK_GLOBAL_NAME,
   type BbDesktopSpellcheckApi,
 } from "./desktop-spellcheck-contract.js";
+import { resolveBbDesktopPlatform } from "./desktop-platform.js";
 
 function getDesktopVersion(version: string | undefined): string {
   if (version === undefined || version.length === 0) {
@@ -73,7 +75,7 @@ function createInitialDesktopInfo(): BbDesktopInfo {
     lastCheckedAt: null,
     latestVersion: null,
     pendingVersion: null,
-    platform: "macos",
+    platform: resolveBbDesktopPlatform(process.platform),
     updateAvailable: false,
     updateDownloaded: false,
     version: getDesktopVersion(process.env.BB_DESKTOP_VERSION),
@@ -188,9 +190,32 @@ const bbSpellcheckApi: BbDesktopSpellcheckApi = {
   },
 };
 
+function browserViewBoundsAtWindowScale(
+  bounds: BbDesktopBrowserViewBounds,
+): BbDesktopBrowserViewBounds {
+  const zoomFactor = webFrame.getZoomFactor();
+  if (zoomFactor === 1) {
+    return bounds;
+  }
+  const x = Math.round(bounds.x * zoomFactor);
+  const y = Math.round(bounds.y * zoomFactor);
+  return {
+    x,
+    y,
+    width: Math.max(0, Math.round((bounds.x + bounds.width) * zoomFactor) - x),
+    height: Math.max(
+      0,
+      Math.round((bounds.y + bounds.height) * zoomFactor) - y,
+    ),
+  };
+}
+
 const bbBrowserApi: BbDesktopBrowserApi = {
   attach(request): void {
-    ipcRenderer.send(BB_DESKTOP_BROWSER_ATTACH_CHANNEL, request);
+    ipcRenderer.send(BB_DESKTOP_BROWSER_ATTACH_CHANNEL, {
+      ...request,
+      bounds: browserViewBoundsAtWindowScale(request.bounds),
+    });
   },
   detach(tabId): void {
     ipcRenderer.send(BB_DESKTOP_BROWSER_DETACH_CHANNEL, { tabId });
@@ -211,7 +236,10 @@ const bbBrowserApi: BbDesktopBrowserApi = {
     ipcRenderer.send(BB_DESKTOP_BROWSER_STOP_CHANNEL, { tabId });
   },
   setBounds(request): void {
-    ipcRenderer.send(BB_DESKTOP_BROWSER_SET_BOUNDS_CHANNEL, request);
+    ipcRenderer.send(BB_DESKTOP_BROWSER_SET_BOUNDS_CHANNEL, {
+      ...request,
+      bounds: browserViewBoundsAtWindowScale(request.bounds),
+    });
   },
   setVisible(request): void {
     ipcRenderer.send(BB_DESKTOP_BROWSER_SET_VISIBLE_CHANNEL, request);
@@ -253,7 +281,7 @@ const bbDesktopApi: BbDesktopApi = {
   get pendingVersion() {
     return currentInfo.pendingVersion;
   },
-  platform: "macos",
+  platform: resolveBbDesktopPlatform(process.platform),
   get updateAvailable() {
     return currentInfo.updateAvailable;
   },

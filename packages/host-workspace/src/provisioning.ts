@@ -8,15 +8,17 @@ import {
   type ProvisioningTranscriptEntry,
 } from "@bb/domain";
 import {
+  killProcessGroup,
   sanitizeInheritedChildProcessEnv,
   spawnPortableOutputProcess,
-  type PortableOutputChildProcess,
+  supportsProcessGroups,
 } from "@bb/process-utils";
 import { Workspace } from "./workspace.js";
 import { tryWithCheckoutMutationLock } from "./checkout-mutation-lock.js";
 import {
   pathExists,
   readDefaultBranch,
+  readGitRepositoryState,
   runGit,
   WorkspaceError,
   type GitCommandResult,
@@ -85,11 +87,6 @@ interface SetupScriptCommand {
 interface BuildSetupScriptCommandArgs {
   platform: NodeJS.Platform;
   scriptPath: string;
-}
-
-interface KillSetupScriptProcessArgs {
-  child: PortableOutputChildProcess;
-  signal: NodeJS.Signals;
 }
 
 const SETUP_SCRIPT_ABORT_KILL_GRACE_MS = 2_000;
@@ -210,23 +207,6 @@ export function buildSetupScriptCommand(
   };
 }
 
-function shouldRunSetupScriptInProcessGroup(): boolean {
-  return process.platform !== "win32";
-}
-
-function killSetupScriptProcess(args: KillSetupScriptProcessArgs): void {
-  if (shouldRunSetupScriptInProcessGroup() && args.child.pid !== undefined) {
-    try {
-      process.kill(-args.child.pid, args.signal);
-      return;
-    } catch {
-      // Fall back to killing the direct child if the process group is gone.
-    }
-  }
-
-  args.child.kill(args.signal);
-}
-
 function createProvisionCancelledError(cause?: unknown): WorkspaceError {
   return new WorkspaceError(
     "provision_cancelled",
@@ -339,6 +319,22 @@ export async function createWorktree(
   throwIfProvisionAborted(args.signal);
   if (await ensureExistingWorkspaceMatches(args.targetPath, args.branchName)) {
     return { path: args.targetPath };
+  }
+
+  throwIfProvisionAborted(args.signal);
+  switch (await readGitRepositoryState(args.sourcePath)) {
+    case "not_git":
+      throw new WorkspaceError(
+        "not_git_repo",
+        `Cannot create a worktree because the source is not a Git repository: ${args.sourcePath}. Initialize it and create at least one commit, then try again.`,
+      );
+    case "no_commits":
+      throw new WorkspaceError(
+        "unborn_head",
+        `Cannot create a worktree because the repository has no commits: ${args.sourcePath}. Create an initial commit, then try again.`,
+      );
+    case "has_commits":
+      break;
   }
 
   throwIfProvisionAborted(args.signal);
@@ -551,7 +547,7 @@ export async function runSetupScript(
     command: command.command,
     args: command.args,
     cwd: args.workspacePath,
-    detached: shouldRunSetupScriptInProcessGroup(),
+    detached: supportsProcessGroups(),
     env,
   });
 
@@ -580,7 +576,7 @@ export async function runSetupScript(
 
   const timeout = setTimeout(() => {
     timedOut = true;
-    killSetupScriptProcess({
+    killProcessGroup({
       child,
       signal: "SIGKILL",
     });
@@ -590,12 +586,12 @@ export async function runSetupScript(
       return;
     }
     abortRequested = true;
-    killSetupScriptProcess({
+    killProcessGroup({
       child,
       signal: "SIGTERM",
     });
     abortKillTimeout = setTimeout(() => {
-      killSetupScriptProcess({
+      killProcessGroup({
         child,
         signal: "SIGKILL",
       });

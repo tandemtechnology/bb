@@ -9,13 +9,14 @@ import {
   type ReapedIdleProviderSession,
 } from "@bb/agent-runtime";
 import type { Logger } from "@bb/logger";
+import { killProcessesWithCwdUnder } from "@bb/process-utils";
 import type {
   PendingInteractionCreate,
   PendingInteractionResolution,
   ThreadEvent,
   WorkspaceProvisionType,
 } from "@bb/domain";
-import { turnScope } from "@bb/domain";
+import { threadScope, turnScope } from "@bb/domain";
 import type {
   HostDaemonActiveThread,
   HostDaemonEnvironmentChange,
@@ -187,6 +188,10 @@ export interface RefreshEnvironmentWorkspaceArgs {
 
 export interface RuntimeManagerOptions {
   bridgeBundleDir?: AgentRuntimeOptions["bridgeBundleDir"];
+  /**
+   * Reads the daemon's cached provider-bridge policy at runtime creation.
+   * Per-runtime static: a policy flip applies to runtimes created after it.
+   */
   createRuntime?: (options: AgentRuntimeOptions) => AgentRuntime;
   dataDir?: string;
   dataDirSkillsRootPath?: string | null;
@@ -218,6 +223,7 @@ export interface RuntimeManagerOptions {
 export interface RuntimeManagerReapIdleProviderSessionsArgs {
   idleForMs: number;
   nowMs: number;
+  providerSessionReapingEnabled: boolean;
 }
 
 export interface RuntimeManagerReapedIdleProviderSession extends ReapedIdleProviderSession {
@@ -237,6 +243,8 @@ export type ReleaseThreadActiveTurnPolicy = "interrupt" | "keep";
 export interface ReleaseThreadFromOtherEnvironmentsResult {
   /** Environments that still run a turn for the thread under `keep`. */
   activeTurnEnvironmentIds: string[];
+  /** Provider checkpoint retained by a stopped runtime, when one reported it. */
+  providerCheckpointId: string | null;
   /** Environments whose runtime released the thread. */
   releasedEnvironmentIds: string[];
 }
@@ -443,13 +451,24 @@ export class RuntimeManager {
       (entry) => !keptEntries.includes(entry),
     );
 
-    await Promise.all(
+    const stopResults = await Promise.all(
       releasedEntries.map((entry) =>
         entry.runtime.stopThread({ threadId: args.threadId }),
       ),
     );
+    const providerCheckpointIds = new Set(
+      stopResults.flatMap((result) =>
+        result.providerCheckpointId === null
+          ? []
+          : [result.providerCheckpointId],
+      ),
+    );
     return {
       activeTurnEnvironmentIds: keptEntries.map((entry) => entry.environmentId),
+      providerCheckpointId:
+        providerCheckpointIds.size === 1
+          ? (providerCheckpointIds.values().next().value ?? null)
+          : null,
       releasedEnvironmentIds: releasedEntries.map(
         (entry) => entry.environmentId,
       ),
@@ -579,7 +598,16 @@ export class RuntimeManager {
   ): Promise<RuntimeManagerReapIdleProviderSessionsResult> {
     const reapedSessions: RuntimeManagerReapedIdleProviderSession[] = [];
     for (const entry of this.entries.values()) {
-      const result = await entry.runtime.reapIdleProviderSessions(args);
+      const result = await entry.runtime.reapIdleProviderSessions({
+        ...args,
+        runThreadExclusive: (threadId, work) =>
+          this.enqueueThreadControl(threadId, () => {
+            if (this.entryHasInFlightThreadCommand(entry, threadId)) {
+              return null;
+            }
+            return work();
+          }),
+      });
       for (const session of result.reapedSessions) {
         reapedSessions.push({
           ...session,
@@ -664,6 +692,17 @@ export class RuntimeManager {
     }
     return [...commandsByThreadId.keys()].some(
       (threadId) => threadId !== excludingThreadId,
+    );
+  }
+
+  private entryHasInFlightThreadCommand(
+    entry: RuntimeEntry,
+    threadId: string,
+  ): boolean {
+    return (
+      this.inFlightThreadCommandsByEnvironmentId
+        .get(entry.environmentId)
+        ?.has(threadId) ?? false
     );
   }
 
@@ -1088,8 +1127,54 @@ export class RuntimeManager {
     this.entries.delete(environmentId);
     await this.stopWatchingStatus(entry);
     await entry.runtime.shutdown();
+    await this.killManagedWorkspaceProcesses(entry);
     await entry.workspace.destroy();
     await this.cleanupUnusedInjectedSkillStagingDirs([]);
+  }
+
+  /**
+   * Reaps every process still rooted in a managed workspace before its
+   * directory is removed. Runtime and terminal shutdown signal their own
+   * process groups, but processes that start a new session (`setsid`,
+   * `nohup`, detached dev servers) survive that and would otherwise keep
+   * running with a cwd in a deleted directory.
+   *
+   * The sweep is ownership-agnostic on purpose: it kills ANY process of this
+   * user whose cwd is inside the workspace, including ones bb never started
+   * (a shell `cd`'d into the worktree, an editor terminal, a debugger). The
+   * directory is about to be deleted, so those processes lose their cwd
+   * anyway. Only managed workspaces are swept; personal workspaces stay
+   * untouched.
+   */
+  private async killManagedWorkspaceProcesses(
+    entry: RuntimeEntry,
+  ): Promise<void> {
+    if (!entry.workspace.managed) {
+      return;
+    }
+    try {
+      const killed = await killProcessesWithCwdUnder({
+        directory: entry.workspace.path,
+      });
+      if (killed.length > 0) {
+        this.options.logger?.warn(
+          {
+            environmentId: entry.environmentId,
+            workspacePath: entry.workspace.path,
+            pids: killed.map((process) => process.pid),
+          },
+          "Killed processes still running in a destroyed environment",
+        );
+      }
+    } catch (error) {
+      this.options.logger?.warn(
+        {
+          environmentId: entry.environmentId,
+          reason: error instanceof Error ? error.message : String(error),
+        },
+        "Failed to reap processes in a destroyed environment",
+      );
+    }
   }
 
   async forgetEnvironment(environmentId: string): Promise<void> {
@@ -1178,9 +1263,10 @@ export class RuntimeManager {
   /**
    * Synthesizes failure events for threads that were mid-turn when their
    * provider process died, from the runtime's final per-thread snapshot.
-   * Threads without an active turn need no synthesized events: in-flight
-   * RPCs fail through the command result path, and idle resident threads
-   * simply resume on their next turn.
+   * A process can also die after a turn request is sent but before the
+   * provider emits turn/started. That request has already made the server
+   * thread active, so synthesize a thread-scoped error to settle it instead
+   * of waiting for the live-command timeout.
    */
   private buildUnexpectedProviderExitEvents(
     info: AgentRuntimeProcessExitInfo,
@@ -1190,7 +1276,21 @@ export class RuntimeManager {
     const events: ThreadEvent[] = [];
 
     for (const thread of info.threads) {
-      if (thread.activeTurnId === null || thread.providerThreadId === null) {
+      if (thread.activeTurnId === null) {
+        if (thread.pendingTurnStart) {
+          events.push({
+            type: "system/error",
+            threadId: thread.threadId,
+            scope: threadScope(),
+            code: "provider_process_exited",
+            message,
+            ...(detail ? { detail } : {}),
+          });
+        }
+        continue;
+      }
+
+      if (thread.providerThreadId === null) {
         continue;
       }
 

@@ -1,5 +1,4 @@
-import { useCallback, useEffect, type ReactNode } from "react";
-import { useAtomValue, useSetAtom } from "jotai";
+import { useEffect, type ReactNode } from "react";
 import type { WorkspaceDiffTarget } from "@bb/domain";
 import type { MarkdownLinkRouting } from "@/components/ui/markdown-link-routing.js";
 import { Skeleton } from "@bb/shared-ui/skeleton";
@@ -27,7 +26,6 @@ import { DiffFilesPanel } from "./git-diff/DiffFilesPanel";
 import { clearDiffFileCardStates } from "./git-diff/diffFilesStore";
 import { buildGitDiffIdentity } from "./git-diff/gitDiffPanelHelpers";
 import { useDiffFileContentsRequester } from "./git-diff/useDiffFileContentsRequester";
-import { pendingGitDiffScrollPathAtom } from "./threadSecondaryPanelAtoms";
 import {
   SecondaryPanelFilePreview,
   ThreadStorageFilePreview,
@@ -46,9 +44,11 @@ export interface GitDiffTabContentProps {
   target: WorkspaceDiffTarget | undefined;
   isDiffPanelActive: boolean;
   gitDiffViewOptions: Record<string, string | boolean | number>;
+  onClearPendingGitDiffIntent?: () => void;
   onOpenFileInEditor?: (path: string) => void;
   onOpenFilePreview?: (path: string) => void;
   onSelectionAddToChat?: (text: string) => void;
+  pendingGitDiffScrollPath?: string | null;
   workspaceRootPath?: string | null;
 }
 
@@ -136,18 +136,20 @@ function ThreadDiffSkeleton({
  * The diff tab body. Fetches the diff's table of contents
  * ({@link useEnvironmentDiffFiles}) and renders it through the virtualized
  * {@link DiffFilesPanel}, which fetches per-file patches on demand as rows
- * scroll into view. Handles the TOC's loading / empty / `not_applicable`
- * (`too_many_files`) / `unavailable` states; per-file patch errors surface as
- * retryable card errors inside the panel.
+ * scroll into view. Handles the TOC's loading / empty / `not_applicable` /
+ * `unavailable` states; per-file patch errors surface as retryable card errors
+ * inside the panel.
  */
 export function GitDiffTabContent({
   environmentId,
   target,
   isDiffPanelActive,
   gitDiffViewOptions,
+  onClearPendingGitDiffIntent,
   onOpenFileInEditor,
   onOpenFilePreview,
   onSelectionAddToChat,
+  pendingGitDiffScrollPath,
   workspaceRootPath,
 }: GitDiffTabContentProps) {
   const isQueryEnabled =
@@ -177,16 +179,6 @@ export function GitDiffTabContent({
     target,
     mergeBaseRef,
   });
-
-  // A file opened from the info tab / prompt banner sets this path;
-  // useGitDiffPanelState resets the diff to all-changes so the file is in the
-  // slice, and the panel scrolls it into view, then clears the request here.
-  const pendingGitDiffScrollPath = useAtomValue(pendingGitDiffScrollPathAtom);
-  const setPendingGitDiffScrollPath = useSetAtom(pendingGitDiffScrollPathAtom);
-  const clearPendingGitDiffScrollPath = useCallback(
-    () => setPendingGitDiffScrollPath(null),
-    [setPendingGitDiffScrollPath],
-  );
 
   // Drop per-card UI state belonging to any other diff slice once a new target
   // / environment resolves, so collapse defaults are re-derived fresh rather
@@ -277,23 +269,34 @@ export function GitDiffTabContent({
   }
 
   return (
-    <DiffFilesPanel
-      environmentId={environmentId}
-      target={target}
-      diffIdentity={diffIdentity}
-      files={diffFilesResponse.files}
-      initialPatches={diffFilesResponse.initialPatches}
-      filesUpdatedAt={diffFilesUpdatedAt}
-      diffViewOptions={gitDiffViewOptions}
-      filePathRoot={workspaceRootPath}
-      isPlaceholderData={isDiffFilesPlaceholder}
-      scrollToPath={pendingGitDiffScrollPath}
-      onScrolledToPath={clearPendingGitDiffScrollPath}
-      onOpenFileInEditor={onOpenFileInEditor}
-      onOpenFilePreview={onOpenFilePreview}
-      onRequestFileContents={onRequestFileContents}
-      onSelectionAddToChat={onSelectionAddToChat}
-    />
+    <div className="flex min-h-0 flex-1 flex-col">
+      {diffFilesResponse.truncated ? (
+        <div
+          role="status"
+          className="mx-4 mb-2 rounded-lg border border-border bg-surface-raised px-3 py-2 text-xs text-muted-foreground"
+        >
+          Showing the first {diffFilesResponse.files.length} changed files.
+          Additional changes are omitted.
+        </div>
+      ) : null}
+      <DiffFilesPanel
+        environmentId={environmentId}
+        target={target}
+        diffIdentity={diffIdentity}
+        files={diffFilesResponse.files}
+        initialPatches={diffFilesResponse.initialPatches}
+        filesUpdatedAt={diffFilesUpdatedAt}
+        diffViewOptions={gitDiffViewOptions}
+        filePathRoot={workspaceRootPath}
+        isPlaceholderData={isDiffFilesPlaceholder}
+        scrollToPath={pendingGitDiffScrollPath}
+        onScrolledToPath={onClearPendingGitDiffIntent}
+        onOpenFileInEditor={onOpenFileInEditor}
+        onOpenFilePreview={onOpenFilePreview}
+        onRequestFileContents={onRequestFileContents}
+        onSelectionAddToChat={onSelectionAddToChat}
+      />
+    </div>
   );
 }
 

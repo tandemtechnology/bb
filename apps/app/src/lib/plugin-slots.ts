@@ -7,12 +7,14 @@ import type {
   PluginMessageActionRegistration,
   PluginMessageDirectiveRegistration,
   PluginNavPanelRegistration,
+  PluginNewThreadPanelActionRegistration,
+  PluginProviderIconRegistration,
   PluginSettingsSectionRegistration,
   PluginSidebarFooterActionRegistration,
   PluginThreadHeaderActionRegistration,
   PluginThreadListRegistration,
   PluginThreadPanelActionRegistration,
-} from "@bb/plugin-sdk";
+} from "@get-bb/plugin-sdk";
 
 /**
  * Client-side slot store (plugin design §5.2): the interpreted `app.slots.*`
@@ -27,6 +29,8 @@ export interface PluginRegistrationSet {
   settingsSections: readonly PluginSettingsSectionRegistration[];
   navPanels: readonly PluginNavPanelRegistration[];
   threadPanelActions: readonly PluginThreadPanelActionRegistration[];
+  /** Optional for bundles built before this experimental slot existed. */
+  newThreadPanelActions?: readonly PluginNewThreadPanelActionRegistration[];
   composerCustomizations?: readonly ComposerCustomization[];
   pendingInteractions?: readonly PluginPendingInteractionRegistration[];
   sidebarFooterActions: readonly PluginSidebarFooterActionRegistration[];
@@ -40,6 +44,8 @@ export interface PluginRegistrationSet {
   fileOpeners: readonly PluginFileOpenerRegistration[];
   messageDirectives: readonly PluginMessageDirectiveRegistration[];
   messageActions?: readonly PluginMessageActionRegistration[];
+  /** Optional for the same reason as `threadLists`: bundles built earlier. */
+  providerIcons?: readonly PluginProviderIconRegistration[];
 }
 
 interface PluginSlotBase {
@@ -61,6 +67,8 @@ export interface PluginNavPanelSlot
   extends PluginNavPanelRegistration, PluginSlotBase {}
 export interface PluginThreadPanelActionSlot
   extends PluginThreadPanelActionRegistration, PluginSlotBase {}
+export interface PluginNewThreadPanelActionSlot
+  extends PluginNewThreadPanelActionRegistration, PluginSlotBase {}
 export interface PluginComposerCustomizationSlot
   extends ComposerCustomization, PluginSlotBase {}
 export interface PluginPendingInteractionSlot
@@ -77,6 +85,8 @@ export interface PluginMessageDirectiveSlot
   extends PluginMessageDirectiveRegistration, PluginSlotBase {}
 export interface PluginMessageActionSlot
   extends PluginMessageActionRegistration, PluginSlotBase {}
+export interface PluginProviderIconSlot
+  extends PluginProviderIconRegistration, PluginSlotBase {}
 
 /** Flattened view across plugins, ordered by plugin id (deterministic). */
 export interface PluginSlotSnapshot {
@@ -84,6 +94,7 @@ export interface PluginSlotSnapshot {
   settingsSections: readonly PluginSettingsSectionSlot[];
   navPanels: readonly PluginNavPanelSlot[];
   threadPanelActions: readonly PluginThreadPanelActionSlot[];
+  newThreadPanelActions: readonly PluginNewThreadPanelActionSlot[];
   composerCustomizations: readonly PluginComposerCustomizationSlot[];
   pendingInteractions: readonly PluginPendingInteractionSlot[];
   sidebarFooterActions: readonly PluginSidebarFooterActionSlot[];
@@ -92,6 +103,7 @@ export interface PluginSlotSnapshot {
   fileOpeners: readonly PluginFileOpenerSlot[];
   messageDirectives: readonly PluginMessageDirectiveSlot[];
   messageActions: readonly PluginMessageActionSlot[];
+  providerIcons: readonly PluginProviderIconSlot[];
 }
 
 export const EMPTY_PLUGIN_SLOT_SNAPSHOT: PluginSlotSnapshot = {
@@ -99,6 +111,7 @@ export const EMPTY_PLUGIN_SLOT_SNAPSHOT: PluginSlotSnapshot = {
   settingsSections: [],
   navPanels: [],
   threadPanelActions: [],
+  newThreadPanelActions: [],
   composerCustomizations: [],
   pendingInteractions: [],
   sidebarFooterActions: [],
@@ -107,6 +120,7 @@ export const EMPTY_PLUGIN_SLOT_SNAPSHOT: PluginSlotSnapshot = {
   fileOpeners: [],
   messageDirectives: [],
   messageActions: [],
+  providerIcons: [],
 };
 
 const registrationsByPluginId = new Map<string, PluginRegistrationSet>();
@@ -121,6 +135,7 @@ function buildSnapshot(): PluginSlotSnapshot {
     settingsSections: PluginSettingsSectionSlot[];
     navPanels: PluginNavPanelSlot[];
     threadPanelActions: PluginThreadPanelActionSlot[];
+    newThreadPanelActions: PluginNewThreadPanelActionSlot[];
     composerCustomizations: PluginComposerCustomizationSlot[];
     pendingInteractions: PluginPendingInteractionSlot[];
     sidebarFooterActions: PluginSidebarFooterActionSlot[];
@@ -129,11 +144,13 @@ function buildSnapshot(): PluginSlotSnapshot {
     fileOpeners: PluginFileOpenerSlot[];
     messageDirectives: PluginMessageDirectiveSlot[];
     messageActions: PluginMessageActionSlot[];
+    providerIcons: PluginProviderIconSlot[];
   } = {
     homepageSections: [],
     settingsSections: [],
     navPanels: [],
     threadPanelActions: [],
+    newThreadPanelActions: [],
     composerCustomizations: [],
     pendingInteractions: [],
     sidebarFooterActions: [],
@@ -142,6 +159,7 @@ function buildSnapshot(): PluginSlotSnapshot {
     fileOpeners: [],
     messageDirectives: [],
     messageActions: [],
+    providerIcons: [],
   };
   for (const pluginId of pluginIds) {
     const set = registrationsByPluginId.get(pluginId);
@@ -158,6 +176,13 @@ function buildSnapshot(): PluginSlotSnapshot {
     }
     for (const registration of set.threadPanelActions) {
       next.threadPanelActions.push({ ...registration, pluginId, generation });
+    }
+    for (const registration of set.newThreadPanelActions ?? []) {
+      next.newThreadPanelActions.push({
+        ...registration,
+        pluginId,
+        generation,
+      });
     }
     for (const registration of set.composerCustomizations ?? []) {
       next.composerCustomizations.push({
@@ -190,6 +215,22 @@ function buildSnapshot(): PluginSlotSnapshot {
     }
     for (const registration of set.messageActions ?? []) {
       next.messageActions.push({ ...registration, pluginId, generation });
+    }
+    for (const registration of set.providerIcons ?? []) {
+      const claimed = next.providerIcons.find(
+        (slot) => slot.providerId === registration.providerId,
+      );
+      if (claimed !== undefined) {
+        // Provider ids are a shared namespace: nothing stops a second plugin
+        // from claiming an id it does not own. Plugin ids are iterated in
+        // sorted order, so keeping the first claim makes the winner stable
+        // across reloads instead of depending on load timing.
+        console.warn(
+          `plugin ${pluginId}: provider icon for "${registration.providerId}" ignored — already registered by plugin ${claimed.pluginId}`,
+        );
+        continue;
+      }
+      next.providerIcons.push({ ...registration, pluginId, generation });
     }
   }
   return next;

@@ -69,6 +69,10 @@ const defaultModelList = {
 // Test-only mode used by runtime command-contract coverage.
 const simulateArchivedSession = process.argv.includes("--archived-session");
 const failUnarchive = process.argv.includes("--unarchive-fails");
+let failNextDiscard = process.argv.includes("--discard-fails-once");
+const returnThreadIdAsProviderIdentity = process.argv.includes(
+  "--thread-id-provider-identity",
+);
 // Exit right after reporting the archived error, so recovery has to work
 // against a replacement process.
 const exitAfterArchivedError = process.argv.includes("--exit-after-archived");
@@ -266,6 +270,20 @@ function completeTurn(
   clearActiveTurn(thread);
 
   if (status === "completed") {
+    const itemId = `msg-${thread.turnCount}`;
+    send({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: {
+        threadId,
+        turnId: turn.turnId,
+        item: {
+          type: "agentMessage",
+          id: itemId,
+          text: "",
+        },
+      },
+    });
     send({
       jsonrpc: "2.0",
       method: "item/completed",
@@ -274,7 +292,7 @@ function completeTurn(
         turnId: turn.turnId,
         item: {
           type: "agentMessage",
-          id: `msg-${thread.turnCount}`,
+          id: itemId,
           text: responseText,
         },
       },
@@ -438,8 +456,9 @@ function startOrResumeThread(
 ): void {
   const params = getParams(message);
   const threadId = getString(params.threadId, "unknown");
-  const providerThreadId =
-    mode === "resume"
+  const providerThreadId = returnThreadIdAsProviderIdentity
+    ? threadId
+    : mode === "resume"
       ? getString(params.providerThreadId) ||
         `resumed-${nextProviderThreadId++}`
       : `prov-${nextProviderThreadId++}`;
@@ -454,7 +473,9 @@ function startOrResumeThread(
   send({
     jsonrpc: "2.0",
     id: getJsonRpcId(message.id) ?? 0,
-    result: { providerThreadId },
+    result: returnThreadIdAsProviderIdentity
+      ? { threadId }
+      : { providerThreadId },
   });
 
   if (mode === "start" || mode === "fork") {
@@ -634,6 +655,24 @@ function handleMessage(message: JsonRecord): void {
     const thread = getThreadState(threadId);
     if (thread && thread.activeTurn) {
       completeTurn(threadId, "interrupted", "Interrupted");
+    }
+    send({
+      jsonrpc: "2.0",
+      id: getJsonRpcId(message.id) ?? 0,
+      result: { ok: true },
+    });
+    return;
+  }
+
+  if (method === "thread/discard") {
+    if (failNextDiscard) {
+      failNextDiscard = false;
+      send({
+        jsonrpc: "2.0",
+        id: getJsonRpcId(message.id) ?? 0,
+        error: { code: -32000, message: "discard is temporarily unavailable" },
+      });
+      return;
     }
     send({
       jsonrpc: "2.0",

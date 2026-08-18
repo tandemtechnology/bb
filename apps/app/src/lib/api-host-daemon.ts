@@ -5,7 +5,7 @@ import {
   type OpenInTargetRequest,
   type StatusResponse,
   type WorkspaceOpenTarget,
-} from "@bb/host-daemon-contract";
+} from "@bb/host-daemon-contract/local";
 import { z } from "zod";
 
 let client: ReturnType<typeof createHostDaemonLocalClient> | null = null;
@@ -46,15 +46,6 @@ export async function fetchHostStatus(
   } catch {
     return null;
   }
-}
-
-/** Fetch the local connected server-session host ID from the daemon. */
-export async function fetchHostId(port: number): Promise<string | null> {
-  const status = await fetchHostStatus(port);
-  if (!status?.connected) {
-    return null;
-  }
-  return status.hostId;
 }
 
 export async function fetchWorkspaceOpenTargets(

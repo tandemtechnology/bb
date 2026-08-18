@@ -14,6 +14,7 @@ import {
   defaultExperiments,
   encodeClientTurnRequestIdNumber,
 } from "@bb/domain";
+import type { DiscoveredSkill } from "@bb/host-daemon-contract";
 import { setPluginAgentContributions } from "../../src/services/plugins/plugin-agent-contributions.js";
 import { readSkillTreeManifest } from "../../src/services/skills/injected-skills.js";
 import type { PluginAgentToolContribution } from "../../src/services/plugins/plugin-service.js";
@@ -38,6 +39,7 @@ import {
   registerHostRpcResponder,
   type HostRpcResponder,
 } from "../helpers/host-rpc.js";
+import { registerFakeProviders } from "../helpers/provider-registry.js";
 import type { TestAppHarness } from "../helpers/test-app.js";
 import { textInput } from "../helpers/prompt-input.js";
 import { withTestHarness } from "../helpers/test-app.js";
@@ -96,6 +98,7 @@ function registerRemoteRuntimeFileResponder(
     files: ReadonlyMap<string, string>;
     hostId: string;
     sessionId: string;
+    sharedSkills?: DiscoveredSkill[];
   },
 ): HostRpcResponder {
   return registerHostRpcResponder(harness, {
@@ -140,6 +143,12 @@ function registerRemoteRuntimeFileResponder(
           },
         };
       }
+      if (command.type === "host.list_skills") {
+        return {
+          ok: true,
+          result: { skills: args.sharedSkills ?? [] },
+        };
+      }
       throw new Error(`Unexpected remote runtime RPC ${command.type}`);
     },
   });
@@ -156,6 +165,7 @@ describe("thread runtime config", () => {
             command: "custom-agent",
             args: ["serve"],
             env: { CUSTOM_AGENT_TOKEN: "token" },
+            supportsManualCompaction: false,
             cwd: "/agent-home",
             modelCli: {
               listArgs: ["models", "list"],
@@ -751,37 +761,40 @@ describe("thread runtime config", () => {
     });
   });
 
-  it("accepts max reasoning for Pi sessions", async () => {
-    await withTestHarness(async (harness) => {
-      const { host } = seedHostSession(harness.deps, {
-        id: "host-runtime-pi-max-reasoning",
-      });
-      const { project } = seedProjectWithSource(harness.deps, {
-        hostId: host.id,
-      });
-      const environment = seedEnvironment(harness.deps, {
-        hostId: host.id,
-        projectId: project.id,
-      });
-      const thread = seedThread(harness.deps, {
-        projectId: project.id,
-        environmentId: environment.id,
-        providerId: "pi",
-      });
+  it.each(["none", "max"] as const)(
+    "accepts %s reasoning for Pi sessions",
+    async (reasoningLevel) => {
+      await withTestHarness(async (harness) => {
+        const { host } = seedHostSession(harness.deps, {
+          id: `host-runtime-pi-${reasoningLevel}-reasoning`,
+        });
+        const { project } = seedProjectWithSource(harness.deps, {
+          hostId: host.id,
+        });
+        const environment = seedEnvironment(harness.deps, {
+          hostId: host.id,
+          projectId: project.id,
+        });
+        const thread = seedThread(harness.deps, {
+          projectId: project.id,
+          environmentId: environment.id,
+          providerId: "pi",
+        });
 
-      const execution = await resolveExecutionOptions(harness.deps, {
-        threadId: thread.id,
-        requestedExecution: {
-          model: "openai-codex/gpt-5.6-luna",
-          permissionMode: "full",
-          reasoningLevel: "max",
-          source: "client/turn/requested",
-        },
-      });
+        const execution = await resolveExecutionOptions(harness.deps, {
+          threadId: thread.id,
+          requestedExecution: {
+            model: "openai-codex/gpt-5.6-luna",
+            permissionMode: "full",
+            reasoningLevel,
+            source: "client/turn/requested",
+          },
+        });
 
-      expect(execution.reasoningLevel).toBe("max");
-    });
-  });
+        expect(execution.reasoningLevel).toBe(reasoningLevel);
+      });
+    },
+  );
 
   it("rejects reasoning levels unsupported by the provider", async () => {
     await withTestHarness(async (harness) => {
@@ -945,8 +958,9 @@ describe("thread runtime config", () => {
 
       setExperiments(harness.db, {
         claudeCodeMockCliTraffic: true,
+        editMessages: false,
         newOnboarding: false,
-        toolsHub: false,
+        providerSessionReaping: false,
       });
 
       expect((await buildCommand(2)).options.claudeCodeMockCliTraffic).toEqual({
@@ -1006,7 +1020,7 @@ describe("thread runtime config", () => {
     });
   });
 
-  it("disables provider-native subagent tools independently", async () => {
+  it("carries provider-native feature settings independently", async () => {
     await withTestHarness(async (harness) => {
       setAppSettings(harness.db, {
         ...defaultAppSettings,
@@ -1059,7 +1073,66 @@ describe("thread runtime config", () => {
       const claudeCode = await build("claude-code");
       expect(claudeCode.options.providerSubagentsEnabled).toBe(false);
       expect(claudeCode.options.workflowsEnabled).toBe(false);
-      expect(claudeCode.disallowedTools).toEqual(["Task", "Workflow"]);
+      expect(claudeCode.disallowedTools).toBeUndefined();
+    });
+  });
+
+  it("scopes the Claude workflows toggle to claude-code only", async () => {
+    await withTestHarness(async (harness) => {
+      // A non-Claude provider that declares `supportsWorkflows: true`, like
+      // the first third-party workflow provider would.
+      registerFakeProviders(
+        harness.deps.providerRegistry,
+        harness.deps.pluginHostArtifacts,
+      );
+      setAppSettings(harness.db, {
+        ...defaultAppSettings,
+        claudeCodeWorkflowsDisabled: true,
+      });
+      const { host } = seedHostSession(harness.deps, {
+        id: "host-provider-workflows-scope",
+      });
+      const { project } = seedProjectWithSource(harness.deps, {
+        hostId: host.id,
+      });
+      const environment = seedEnvironment(harness.deps, {
+        hostId: host.id,
+        projectId: project.id,
+      });
+
+      async function build(providerId: "fake" | "claude-code", model: string) {
+        const thread = seedThread(harness.deps, {
+          projectId: project.id,
+          environmentId: environment.id,
+          providerId,
+        });
+        return buildThreadStartCommand(harness.deps, {
+          environment,
+          execution: {
+            model,
+            permissionMode: "auto",
+            reasoningLevel: "medium",
+            serviceTier: "default",
+            source: "client/turn/requested",
+          },
+          fork: null,
+          permissionEscalation: "ask",
+          input: textInput("hello"),
+          projectId: project.id,
+          providerId,
+          requestId: encodeClientTurnRequestIdNumber({ value: 1 }),
+          syncGeneratedTitle: false,
+          thread,
+        });
+      }
+
+      // Claude Code honors the Claude-named toggle.
+      const claudeCode = await build("claude-code", "claude-sonnet-4-6");
+      expect(claudeCode.options.workflowsEnabled).toBe(false);
+
+      // Another workflows-capable provider is unaffected by it.
+      const fake = await build("fake", "fake-model");
+      expect(fake.options.workflowsEnabled).toBe(true);
     });
   });
 
@@ -1172,7 +1245,7 @@ describe("thread runtime config", () => {
     });
   });
 
-  it("derives ask escalation only for direct user root-thread work", async () => {
+  it("derives ask escalation for user-initiated work on root and child threads", async () => {
     await withTestHarness(async (harness) => {
       const { host } = seedHostSession(harness.deps, {
         id: "host-runtime-permission-escalation",
@@ -1222,6 +1295,12 @@ describe("thread runtime config", () => {
         resolvePermissionEscalation({
           thread: childThread,
           initiator: "user",
+        }),
+      ).toBe("ask");
+      expect(
+        resolvePermissionEscalation({
+          thread: childThread,
+          initiator: "system",
         }),
       ).toBe("deny");
       expect(
@@ -1547,6 +1626,73 @@ describe("thread runtime config", () => {
         ]),
       );
     });
+  });
+
+  it("injects shared host skills into thread runtime configuration", async () => {
+    await withTestHarness(
+      {
+        sharedSkillRoots: {
+          user: [".agents/skills"],
+          project: [".agents/skills"],
+        },
+      },
+      async (harness) => {
+        const { host, session } = seedHostSession(harness.deps, {
+          id: "host-runtime-shared-skills",
+        });
+        const workspacePath = "/remote/runtime-shared-skills";
+        const skillFilePath = path.join(
+          workspacePath,
+          ".agents",
+          "skills",
+          "portable-review",
+          "SKILL.md",
+        );
+        registerRemoteRuntimeFileResponder(harness, {
+          hostId: host.id,
+          sessionId: session.id,
+          files: new Map(),
+          sharedSkills: [
+            {
+              id: `skill_${"b".repeat(64)}`,
+              name: "portable-review",
+              description: "Review code from one shared source.",
+              filePath: skillFilePath,
+              rootKind: "shared-project",
+              linked: false,
+            },
+          ],
+        });
+        const { project } = seedProjectWithSource(harness.deps, {
+          hostId: host.id,
+          path: workspacePath,
+        });
+        const environment = seedEnvironment(harness.deps, {
+          hostId: host.id,
+          projectId: project.id,
+          path: workspacePath,
+        });
+        const thread = seedThread(harness.deps, {
+          environmentId: environment.id,
+          projectId: project.id,
+          providerId: "claude-code",
+        });
+
+        const runtimeConfig = await resolveThreadRuntimeCommandConfig(
+          harness.deps,
+          { thread, environment, model: "test-model" },
+        );
+
+        expect(runtimeConfig.injectedSkillSources).toContainEqual({
+          kind: "host-path",
+          sourceType: "shared-project",
+          name: "portable-review",
+          description: "Review code from one shared source.",
+          sourceRootPath: path.dirname(skillFilePath),
+          skillFilePath,
+        });
+      },
+    );
   });
 
   it("appends data-dir AGENTS.md instructions before workspace instructions", async () => {

@@ -1,13 +1,13 @@
 import { threadScope, turnScope } from "@bb/domain";
+import type { AdapterCommand, ProviderAdapter } from "../provider-adapter.js";
+import { ProviderRequestDecodeError } from "@bb/provider-bridge-protocol/bridge-kit";
 import type {
-  AdapterCommand,
   DecodedInteractiveRequest,
   DecodedToolCallRequest,
-  ProviderAdapter,
   ProviderCommandPlan,
-} from "../provider-adapter.js";
+} from "@bb/provider-bridge-protocol/bridge-kit";
 import { noPreparedProviderCommandDispatch } from "../provider-adapter.js";
-import { ProviderRequestDecodeError } from "../runtime-json-rpc.js";
+import { classifySessionExecutionSettingsChange } from "../execution-options.js";
 import { parseAvailableModelList } from "../shared/available-models.js";
 import type { AgentRuntimeExecutionOptions } from "../types.js";
 import {
@@ -205,14 +205,17 @@ export function createWarningEventAdapter(scriptPath: string): ProviderAdapter {
   return {
     id: "warning-fake",
     displayName: "Warning Fake",
+    approvalEnforcedBy: "runtime",
     capabilities: {
-      supportsArchive: false,
-      supportsRename: false,
+      supportsThreadArchive: false,
+      supportsThreadRename: false,
       supportsServiceTier: false,
-      supportsUserQuestion: false,
+      supportsNativeUserQuestion: false,
       supportsFork: false,
-      supportedPermissionModes: ["accept-edits", "auto", "full"],
+      supportsSessionRewind: false,
+      permissionModes: ["accept-edits", "auto", "full"],
     },
+    classifyExecutionSettingsChange: classifySessionExecutionSettingsChange,
     process: {
       command: "node",
       args: buildNodeScriptArgs(scriptPath),
@@ -251,6 +254,7 @@ export function createWarningEventAdapter(scriptPath: string): ProviderAdapter {
         case "skills/configure":
         case "turn/steer":
         case "thread/stop":
+        case "thread/discard":
         case "thread/goal/clear":
         case "thread/name/set":
         case "thread/archive":
@@ -317,14 +321,17 @@ export function createStartedEventAdapter(scriptPath: string): ProviderAdapter {
   return {
     id: "started-fake",
     displayName: "Started Fake",
+    approvalEnforcedBy: "runtime",
     capabilities: {
-      supportsArchive: false,
-      supportsRename: false,
+      supportsThreadArchive: false,
+      supportsThreadRename: false,
       supportsServiceTier: false,
-      supportsUserQuestion: false,
+      supportsNativeUserQuestion: false,
       supportsFork: false,
-      supportedPermissionModes: ["accept-edits", "auto", "full"],
+      supportsSessionRewind: false,
+      permissionModes: ["accept-edits", "auto", "full"],
     },
+    classifyExecutionSettingsChange: classifySessionExecutionSettingsChange,
     process: {
       command: "node",
       args: buildNodeScriptArgs(scriptPath),
@@ -356,6 +363,7 @@ export function createStartedEventAdapter(scriptPath: string): ProviderAdapter {
         case "turn/start":
         case "turn/steer":
         case "thread/stop":
+        case "thread/discard":
         case "thread/goal/clear":
         case "thread/name/set":
         case "thread/archive":

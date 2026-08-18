@@ -1,5 +1,7 @@
 import type { ThreadEvent } from "@bb/domain";
 import {
+  isBackgroundAgentTaskType,
+  isBackgroundCommandTaskType,
   LOCAL_WORKFLOW_TASK_TYPE,
   requireThreadEventScopeTurnId,
 } from "@bb/domain";
@@ -48,6 +50,7 @@ import {
 } from "./accepted-client-request-context.js";
 import {
   parseAcceptedSteersFromClientRequest,
+  parseRejectedUsersFromClientRequest,
   parseUsersFromClientRequest,
   parseLegacyUserMessage,
 } from "./user-message-parsing.js";
@@ -83,6 +86,7 @@ import {
   createProjectionState,
   finalizeProjectionState,
   flushProjectionBufferedOutputs,
+  flushProjectionBufferedOutputsAfterTurnCompleted,
   onThreadInterrupted,
   onTurnCompleted,
   onTurnStarted,
@@ -220,21 +224,119 @@ function isDirectBackgroundTaskForCurrentAgent(
   return spawningCall ? spawningCall.parentToolCallId === undefined : true;
 }
 
+function getBackgroundAgentModel(
+  message: EventProjectionWorkflowMessage,
+  callMessageById: ReadonlyMap<string, EventProjectionCallMessage>,
+): string | null {
+  if (
+    !isBackgroundAgentTaskType(message.taskType) ||
+    !message.parentToolCallId
+  ) {
+    return null;
+  }
+  const spawningCall = callMessageById.get(message.parentToolCallId);
+  return spawningCall?.kind === "delegation"
+    ? (spawningCall.model ?? null)
+    : null;
+}
+
+function getBackgroundTaskFamilyId(itemId: string): string {
+  // Claude keeps the provider task id when a settled task restarts and makes
+  // each persisted item unique with a `#N` generation suffix. The restarted
+  // task may omit its original spawning call, so use the stable family id to
+  // carry forward metadata already correlated from an earlier generation.
+  const generationMatch = /#(\d+)$/.exec(itemId);
+  if (!generationMatch) {
+    return itemId;
+  }
+  const generation = Number(generationMatch[1]);
+  return Number.isSafeInteger(generation) && generation > 1
+    ? itemId.slice(0, -generationMatch[0].length)
+    : itemId;
+}
+
+function enrichBackgroundAgentModels(
+  messages: readonly EventProjectionMessage[],
+  callMessageById: ReadonlyMap<string, EventProjectionCallMessage>,
+): void {
+  const modelByTaskFamilyId = new Map<string, string>();
+  for (const message of messages) {
+    if (
+      message.kind !== "workflow" ||
+      !isBackgroundAgentTaskType(message.taskType)
+    ) {
+      continue;
+    }
+
+    const taskFamilyId = getBackgroundTaskFamilyId(message.itemId);
+    const model =
+      getBackgroundAgentModel(message, callMessageById) ??
+      message.model ??
+      modelByTaskFamilyId.get(taskFamilyId) ??
+      null;
+    message.model = model;
+    if (model !== null) {
+      modelByTaskFamilyId.set(taskFamilyId, model);
+    }
+  }
+}
+
+function getRootSpawningCallId(
+  message: EventProjectionWorkflowMessage,
+  callMessageById: ReadonlyMap<string, EventProjectionCallMessage>,
+): string | undefined {
+  let callId = message.parentToolCallId;
+  const visited = new Set<string>();
+  while (callId && !visited.has(callId)) {
+    visited.add(callId);
+    const call = callMessageById.get(callId);
+    if (!call?.parentToolCallId) {
+      return callId;
+    }
+    callId = call.parentToolCallId;
+  }
+  return undefined;
+}
+
 function selectActiveBackgroundCommandMessages(
   messages: readonly EventProjectionMessage[],
+  callMessageById: ReadonlyMap<string, EventProjectionCallMessage>,
 ): EventProjectionWorkflowMessage[] {
   // Running non-workflow background tasks, most recently started first. Feeds
   // the background-activity prompt-box card, independent of the workflow-only
   // banner driven by selectActiveWorkflowMessage.
-  const callMessageById = buildCallMessageById(messages);
+  const representedRootCallIds = new Set<string>();
+  for (const message of messages) {
+    if (
+      message.kind === "workflow" &&
+      message.status === "pending" &&
+      !message.skipTranscript &&
+      message.parentToolCallId &&
+      isDirectBackgroundTaskForCurrentAgent(message, callMessageById)
+    ) {
+      representedRootCallIds.add(message.parentToolCallId);
+    }
+  }
   const running: EventProjectionWorkflowMessage[] = [];
   for (const message of messages) {
+    const isDirect =
+      message.kind === "workflow" &&
+      isDirectBackgroundTaskForCurrentAgent(message, callMessageById);
+    const rootSpawningCallId =
+      message.kind === "workflow"
+        ? getRootSpawningCallId(message, callMessageById)
+        : undefined;
+    const isRepresentedByActiveParent =
+      !isDirect &&
+      rootSpawningCallId !== undefined &&
+      representedRootCallIds.has(rootSpawningCallId);
     if (
       message.kind !== "workflow" ||
       message.taskType === LOCAL_WORKFLOW_TASK_TYPE ||
       message.status !== "pending" ||
       message.skipTranscript ||
-      !isDirectBackgroundTaskForCurrentAgent(message, callMessageById)
+      isRepresentedByActiveParent ||
+      (!isDirect && !isBackgroundCommandTaskType(message.taskType))
     ) {
       continue;
     }
@@ -259,6 +361,18 @@ function buildClientTurnRequestById(
     });
   }
   return requestById;
+}
+
+function buildRejectedClientRequestIds(
+  events: ThreadEventWithMeta[],
+): ReadonlySet<string> {
+  const requestIds = new Set<string>();
+  for (const { event } of events) {
+    if (event.type === "client/turn/rejected") {
+      requestIds.add(event.requestId);
+    }
+  }
+  return requestIds;
 }
 
 function buildSelectedStartedTurnIds(
@@ -513,6 +627,7 @@ function buildFlatProjectionData(
     events: orderedEvents,
   });
   const clientRequestById = buildClientTurnRequestById(orderedEvents);
+  const rejectedClientRequestIds = buildRejectedClientRequestIds(orderedEvents);
   const selectedStartedTurnIds = buildSelectedStartedTurnIds(orderedEvents);
   const acceptedRootClientTurnIds = buildAcceptedRootClientTurnIds(
     orderedEvents,
@@ -600,22 +715,28 @@ function buildFlatProjectionData(
 
     if (isTerminalBufferedTextFlushEvent(eventType)) {
       if (decoded.type === "turn/completed") {
+        const completedTurnId = requireThreadEventScopeTurnId({
+          type: decoded.type,
+          scope: decoded.scope,
+        });
         onTurnCompleted({
           completedAt: meta.createdAt,
           state,
-          turnId: requireThreadEventScopeTurnId({
-            type: decoded.type,
-            scope: decoded.scope,
-          }),
+          turnId: completedTurnId,
           status: decoded.status,
         });
+        flushProjectionBufferedOutputsAfterTurnCompleted(
+          state,
+          completedTurnId,
+        );
       } else {
         onThreadInterrupted({
-          completedAt: meta.createdAt,
+          meta,
           state,
+          threadId: decoded.threadId,
         });
+        flushProjectionBufferedOutputs(state);
       }
-      flushProjectionBufferedOutputs(state);
     }
 
     if (decoded.type === "turn/input/accepted") {
@@ -635,6 +756,27 @@ function buildFlatProjectionData(
       for (const acceptedSteer of acceptedSteers) {
         appendProjectedUserMessage(state, acceptedSteer);
       }
+      continue;
+    }
+
+    if (decoded.type === "client/turn/rejected") {
+      const clientRequest = clientRequestById.get(decoded.requestId);
+      if (clientRequest) {
+        for (const rejectedMessage of parseRejectedUsersFromClientRequest({
+          decoded: clientRequest.event,
+          meta,
+          options: args.options,
+        })) {
+          appendProjectedUserMessage(state, rejectedMessage);
+        }
+      }
+      continue;
+    }
+
+    if (
+      decoded.type === "client/turn/requested" &&
+      rejectedClientRequestIds.has(decoded.requestId)
+    ) {
       continue;
     }
 
@@ -929,12 +1071,17 @@ function buildFlatProjectionData(
 
   finalizeProjectionState({ state, options: args.options });
   const messages = sortEventProjectionMessagesBySource(state.messages);
+  const callMessageById = buildCallMessageById(messages);
+  enrichBackgroundAgentModels(messages, callMessageById);
   return {
     activeThinking: args.includeActiveThinking
       ? buildProjectionActiveThinking(state, args.options?.threadStatus)
       : null,
     activeWorkflows: selectActiveWorkflowMessages(messages),
-    activeBackgroundCommands: selectActiveBackgroundCommandMessages(messages),
+    activeBackgroundCommands: selectActiveBackgroundCommandMessages(
+      messages,
+      callMessageById,
+    ),
     messages,
   };
 }
@@ -946,16 +1093,19 @@ function buildDetailedProjection(
     events: args.events,
     messages: args.messages,
   });
-  const semanticProjection = normalizeEventProjection({
-    ...projection,
-    state: {
-      activeThinking: args.activeThinking,
-      activeWorkflows: args.activeWorkflows,
-      activeBackgroundCommands: args.activeBackgroundCommands,
+  const semanticProjection = normalizeEventProjection(
+    {
+      ...projection,
+      state: {
+        activeThinking: args.activeThinking,
+        activeWorkflows: args.activeWorkflows,
+        activeBackgroundCommands: args.activeBackgroundCommands,
+      },
     },
-  }, {
-    contextOnlyToolCallIds: args.contextOnlyToolCallIds,
-  });
+    {
+      contextOnlyToolCallIds: args.contextOnlyToolCallIds,
+    },
+  );
   return applyProjectionTurnMessageDetail(
     semanticProjection,
     args.turnMessageDetail,

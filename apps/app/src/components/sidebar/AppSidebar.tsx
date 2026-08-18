@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@bb/shared-ui/lib/utils";
 import { THREAD_JUMP_APP_COMMAND_IDS } from "@bb/domain";
 import { Link, useNavigate } from "react-router-dom";
@@ -18,7 +18,7 @@ import {
 } from "@/components/ui/sidebar.js";
 import { ProjectList, ProjectListActionButtons } from "./ProjectList";
 import { PluginThreadList } from "./PluginThreadList";
-import { useThreadListProvider } from "./threadListProvider";
+import { useThreadListReplacement } from "./threadListProvider";
 import { PluginNavSidebarItems } from "@/components/plugin/PluginNavSidebarItems";
 import { PluginSidebarFooterActions } from "@/components/plugin/PluginSidebarFooterActions";
 import { SidebarUpdatesBadge } from "./SidebarUpdatesBadge";
@@ -78,10 +78,10 @@ export function AppSidebar({
   toolsRoutePath,
 }: AppSidebarProps) {
   const quickCreateProject = useQuickCreateProjectController();
-  // A plugin may replace the sidebar's scrolling thread list. It never
-  // replaces the chrome around it: the New-thread button, the search field,
+  // The resolved replacement owns the sidebar's scrolling thread list. It never
+  // replaces the chrome around it: the New-thread button, search field,
   // the plugin nav rows, and the footer stay host-rendered in every sidebar.
-  const threadListProvider = useThreadListProvider();
+  const threadListReplacement = useThreadListReplacement();
   const { threadId: activeThreadId } = useRouteState();
   const navigate = useNavigate();
   const threadSplitsEnabled = useThreadSplitsEnabled();
@@ -179,7 +179,7 @@ export function AppSidebar({
     const target =
       targets[index] ??
       getSidebarThreadShortcutTargets(sidebarRef.current)[index];
-    if (!target) return false;
+    if (!target?.element) return false;
     target.element.click();
     return true;
   }, []);
@@ -197,10 +197,25 @@ export function AppSidebar({
             ? 0
             : targets.length - 1
           : (activeIndex + offset + targets.length) % targets.length;
-      targets[nextIndex]?.element.click();
+      const target = targets[nextIndex];
+      if (!target) return false;
+      if (target.element) {
+        target.element.click();
+        return true;
+      }
+      // The neighbor sits inside a windowed-out placeholder: there is no row
+      // to click, so navigate by id, matching what the row's link would do.
+      if (!target.projectId) return false;
+      closeOnMobile();
+      void navigate(
+        getThreadRoutePath({
+          projectId: target.projectId,
+          threadId: target.threadId,
+        }),
+      );
       return true;
     },
-    [activeThreadId],
+    [activeThreadId, closeOnMobile, navigate],
   );
 
   useAppCommandHandler("thread.search", () => {
@@ -222,7 +237,30 @@ export function AppSidebar({
     hideThreadShortcuts();
   }, [hideThreadShortcuts, isAppCommandModifierHeld, showThreadShortcuts]);
 
-  const builtInThreadList = (
+  // Keep this object identity stable across unrelated re-renders (opening
+  // the mobile drawer flips useSidebar context and re-renders AppSidebar):
+  // a fresh object here would defeat ProjectList's memo and re-render every
+  // thread group on each drawer toggle.
+  const threadSearchPanelController = useMemo(
+    () => ({
+      activeIndex: threadSearch.activeIndex,
+      isActive: threadSearch.isActive,
+      onActiveIndexChange: threadSearch.onActiveIndexChange,
+      onNavigationItemsChange: threadSearch.onNavigationItemsChange,
+      onSelectItem: threadSearch.onSelectItem,
+      query: threadSearch.query,
+    }),
+    [
+      threadSearch.activeIndex,
+      threadSearch.isActive,
+      threadSearch.onActiveIndexChange,
+      threadSearch.onNavigationItemsChange,
+      threadSearch.onSelectItem,
+      threadSearch.query,
+    ],
+  );
+
+  const originalThreadList = (
     <ProjectList
       onNewProject={
         quickCreateProject.isAvailable
@@ -231,14 +269,7 @@ export function AppSidebar({
       }
       onProjectSelect={closeOnMobile}
       isCreatingProject={quickCreateProject.isCreating}
-      threadSearch={{
-        activeIndex: threadSearch.activeIndex,
-        isActive: threadSearch.isActive,
-        onActiveIndexChange: threadSearch.onActiveIndexChange,
-        onNavigationItemsChange: threadSearch.onNavigationItemsChange,
-        onSelectItem: threadSearch.onSelectItem,
-        query: threadSearch.query,
-      }}
+      threadSearch={threadSearchPanelController}
     />
   );
 
@@ -301,16 +332,12 @@ export function AppSidebar({
           toolsRoutePath={toolsRoutePath}
         />
         <SidebarContent>
-          {threadListProvider ? (
-            <PluginThreadList
-              slot={threadListProvider}
-              builtInFallback={builtInThreadList}
-              searchQuery={threadSearch.query}
-              onNavigate={threadSearch.onExternalThreadOpen}
-            />
-          ) : (
-            builtInThreadList
-          )}
+          <PluginThreadList
+            replacement={threadListReplacement}
+            original={originalThreadList}
+            searchQuery={threadSearch.query}
+            onNavigate={threadSearch.onExternalThreadOpen}
+          />
         </SidebarContent>
         <SidebarFooter className="relative">
           <OverflowFade placement="above" tone="sidebar" size="sm" />

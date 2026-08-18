@@ -53,8 +53,6 @@ import type {
   CloseTerminalRequest,
   CommandListResponse,
   CopyProjectAttachmentsRequest,
-  ContinueAfterProviderRateLimitRequest,
-  ContinueAfterProviderRateLimitResponse,
   CreateHostJoinCodeRequest,
   CreateHostJoinCodeResponse,
   CreateTerminalRequest,
@@ -63,6 +61,8 @@ import type {
   CreateQueuedMessageRequest,
   CreateThreadSectionRequest,
   CreateThreadRequest,
+  EditMessageRequest,
+  EditMessageResponse,
   ForkThreadRequest,
   RestartTerminalRequest,
   DeleteThreadSectionRequest,
@@ -138,6 +138,8 @@ import type {
   ReorderProjectRequest,
   ReorderQueuedMessageRequest,
   ResolvePendingInteractionRequest,
+  ResolveThreadMentionsRequest,
+  ResolveThreadMentionsResponse,
   RespondPluginInteractionRequest,
   SendMessageRequest,
   SetQueuedMessageGroupBoundaryRequest,
@@ -173,7 +175,6 @@ import type {
   TerminalResizeRequest,
   ThreadArchiveAllResponse,
   ThreadChildSummaryResponse,
-  ThreadComposerBootstrapResponse,
   ThreadEventWaitQuery,
   ThreadEventsQuery,
   ThreadSectionMutationResponse,
@@ -188,7 +189,6 @@ import type {
   ThreadOpenResponse,
   ThreadPaneActionRequest,
   ThreadPaneActionResponse,
-  ProviderRateLimitRecoveryStatus,
   ThreadPendingInteractionsResponse,
   ThreadQueuedMessageListResponse,
   ThreadResponse,
@@ -225,7 +225,6 @@ import { updateThreadTabsRequestSchema } from "./api/thread-tabs.js";
 import {
   closeTerminalRequestSchema,
   copyProjectAttachmentsRequestSchema,
-  continueAfterProviderRateLimitRequestSchema,
   createFilePreviewRequestSchema,
   createThreadSectionRequestSchema,
   deleteThreadSectionRequestSchema,
@@ -277,8 +276,10 @@ import {
   reorderProjectRequestSchema,
   reorderQueuedMessageRequestSchema,
   resolvePendingInteractionRequestSchema,
+  resolveThreadMentionsRequestSchema,
   respondPluginInteractionRequestSchema,
   sendMessageRequestSchema,
+  editMessageRequestSchema,
   setQueuedMessageGroupBoundaryRequestSchema,
   sendQueuedMessageRequestSchema,
   systemExecutionOptionsQuerySchema,
@@ -942,6 +943,14 @@ export const publicApiRoutes = {
       ),
       response: jsonResponse<ThreadSearchResponse>(),
     }),
+    resolveMentions: defineRoute({
+      path: "/threads/resolve-mentions",
+      method: "post",
+      request: jsonRequest<EmptyInput, ResolveThreadMentionsRequest>(
+        resolveThreadMentionsRequestSchema,
+      ),
+      response: jsonResponse<ResolveThreadMentionsResponse>(),
+    }),
     create: defineRoute({
       path: "/threads",
       method: "post",
@@ -1003,26 +1012,17 @@ export const publicApiRoutes = {
       ),
       response: jsonResponse<{ ok: true }>(),
     }),
-    rateLimitRecovery: defineRoute({
-      path: "/threads/:id/rate-limit-recovery",
-      method: "get",
-      request: noRequest<PathId>(),
-      response: jsonResponse<ProviderRateLimitRecoveryStatus>(),
-    }),
-    continueAfterRateLimit: defineRoute({
-      path: "/threads/:id/rate-limit-recovery/continue",
+    /**
+     * Replace an accepted root user turn and every later turn. A running
+     * thread is stopped and allowed to settle before history is rewritten.
+     */
+    editMessage: defineRoute({
+      path: "/threads/:id/edit-message",
       method: "post",
-      request: jsonRequest<PathId, ContinueAfterProviderRateLimitRequest>(
-        continueAfterProviderRateLimitRequestSchema,
+      request: jsonRequest<PathId, EditMessageRequest>(
+        editMessageRequestSchema,
       ),
-      response: jsonResponse<ContinueAfterProviderRateLimitResponse>(),
-    }),
-    /** @deprecated App code uses dedicated composer queries. */
-    composerBootstrap: defineRoute({
-      path: "/threads/:id/composer-bootstrap",
-      method: "get",
-      request: noRequest<PathId>(),
-      response: jsonResponse<ThreadComposerBootstrapResponse>(),
+      response: jsonResponse<EditMessageResponse>(),
     }),
     queuedMessages: defineRoute({
       path: "/threads/:id/queued-messages",
@@ -1097,6 +1097,12 @@ export const publicApiRoutes = {
     }),
     stop: defineRoute({
       path: "/threads/:id/stop",
+      method: "post",
+      request: noRequest<PathId>(),
+      response: jsonResponse<{ ok: true }>(),
+    }),
+    compact: defineRoute({
+      path: "/threads/:id/compact",
       method: "post",
       request: noRequest<PathId>(),
       response: jsonResponse<{ ok: true }>(),

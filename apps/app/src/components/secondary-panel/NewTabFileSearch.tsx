@@ -57,9 +57,10 @@ export interface NewTabFileSearchProps {
   environmentId: string | null;
   hostId?: string | null;
   currentThreadId: string;
-  focusRequest: number;
+  autoFocus: boolean;
   idleActions: ReactNode;
   initialQuery?: string;
+  onAutoFocusHandled: () => void;
   onSelect: (selection: FileSearchSelection) => void;
   recentItemsThreadId?: string | null;
   showFileSearch?: boolean;
@@ -73,6 +74,8 @@ export interface NewTabActionsProps {
   /** Desktop-only: open a new in-panel browser tab. Absent ⇒ no Browser entry. */
   onOpenBrowser?: OpenBrowserHandler;
   onStartTerminal?: StartTerminalHandler;
+  startTerminalDisabled?: boolean;
+  startTerminalTrailing?: ReactNode;
   /** Plugin `threadPanelAction` rows, rendered after the built-in entries. */
   pluginActions?: readonly PluginPanelActionEntry[];
 }
@@ -143,6 +146,7 @@ interface LauncherTileProps {
 }
 
 interface NewTabActionTileProps {
+  disabled?: boolean;
   id: string;
   iconName: IconName;
   label: string;
@@ -150,6 +154,7 @@ interface NewTabActionTileProps {
   onActivate: () => void;
   onSelect: () => void;
   shortcut?: AppShortcutPresentation;
+  trailing?: ReactNode;
 }
 
 interface ShowMoreToggleProps {
@@ -324,6 +329,7 @@ function LauncherTile({
 }
 
 function NewTabActionTile({
+  disabled = false,
   id,
   iconName,
   label,
@@ -331,7 +337,44 @@ function NewTabActionTile({
   onActivate,
   onSelect,
   shortcut,
+  trailing,
 }: NewTabActionTileProps) {
+  if (trailing !== undefined) {
+    return (
+      <div
+        id={id}
+        className={cn(
+          LAUNCHER_ACTION_ROW_BASE_CLASS,
+          "relative scroll-mt-7",
+          isActive ? "bg-state-active" : disabled ? "" : "hover:bg-state-hover",
+        )}
+      >
+        <button
+          type="button"
+          aria-label={label}
+          aria-keyshortcuts={shortcut?.ariaKeyshortcuts}
+          disabled={disabled}
+          onClick={onSelect}
+          onMouseEnter={onActivate}
+          className="absolute inset-0 rounded focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-default"
+        />
+        <span className={cn(LAUNCHER_ROW_ICON_CLASS, "pointer-events-none")}>
+          <Icon
+            name={iconName}
+            className={COARSE_POINTER_COMPACT_ICON_SIZE_CLASS}
+            aria-hidden
+          />
+        </span>
+        <span className="pointer-events-none min-w-0 flex-1 truncate text-foreground">
+          {label}
+        </span>
+        <div className="relative z-10 ml-auto flex min-w-0 shrink-0 items-center">
+          {trailing}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <LauncherTile
       id={id}
@@ -494,15 +537,17 @@ export function NewTabFileSearch({
   environmentId,
   hostId,
   currentThreadId,
-  focusRequest,
+  autoFocus,
   idleActions,
   initialQuery = "",
+  onAutoFocusHandled,
   onSelect,
   recentItemsThreadId,
   showFileSearch = true,
 }: NewTabFileSearchProps) {
   const quickOpenShortcut = useAppCommandShortcut("file.quickOpen");
   const inputRef = useRef<HTMLInputElement>(null);
+  const focusFrameRef = useRef<number | null>(null);
   const listboxId = useId();
   const isPointerCoarse = usePointerCoarse();
   const [query, setQuery] = useState(initialQuery);
@@ -576,8 +621,27 @@ export function NewTabFileSearch({
     [activeIndex, navigableEntries],
   );
 
+  useEffect(
+    () => () => {
+      if (focusFrameRef.current !== null) {
+        cancelAnimationFrame(focusFrameRef.current);
+      }
+    },
+    [],
+  );
+
   useEffect(() => {
-    if (isPointerCoarse) return;
+    if (!autoFocus) return;
+
+    if (focusFrameRef.current !== null) {
+      cancelAnimationFrame(focusFrameRef.current);
+      focusFrameRef.current = null;
+    }
+
+    if (isPointerCoarse) {
+      onAutoFocusHandled();
+      return;
+    }
 
     // Focus synchronously, then again on the next frame to win the focus race
     // against the panel/tab content mounting in the same commit, which can
@@ -586,11 +650,15 @@ export function NewTabFileSearch({
     // content is briefly wider than the panel, and a scroll there would shift the
     // whole panel content sideways.
     inputRef.current?.focus({ preventScroll: true });
-    const frame = requestAnimationFrame(() => {
+    focusFrameRef.current = requestAnimationFrame(() => {
+      focusFrameRef.current = null;
       inputRef.current?.focus({ preventScroll: true });
     });
-    return () => cancelAnimationFrame(frame);
-  }, [focusRequest, isPointerCoarse]);
+    // Consume the request immediately so a later passive remount does not
+    // interpret the previous explicit open as another focus request. The frame
+    // has separate unmount cleanup so this state update does not cancel it.
+    onAutoFocusHandled();
+  }, [autoFocus, isPointerCoarse, onAutoFocusHandled]);
 
   useEffect(() => {
     setActiveIndex(navigableEntries.length > 0 ? 0 : -1);
@@ -766,6 +834,8 @@ export function NewTabActions({
   onOpenBrowser,
   onStartTerminal,
   pluginActions,
+  startTerminalDisabled,
+  startTerminalTrailing,
 }: NewTabActionsProps) {
   const terminalShortcut = useAppCommandShortcut("terminal.open");
   const showOpenBrowserEntry =
@@ -809,6 +879,7 @@ export function NewTabActions({
           ) : null}
           {showStartTerminalEntry ? (
             <NewTabActionTile
+              disabled={startTerminalDisabled}
               id={START_TERMINAL_ENTRY_ID}
               iconName="Terminal"
               label="Start terminal"
@@ -816,6 +887,7 @@ export function NewTabActions({
               onActivate={() => undefined}
               onSelect={handleStartTerminal}
               shortcut={terminalShortcut ?? undefined}
+              trailing={startTerminalTrailing}
             />
           ) : null}
           {pluginActions?.map((action) => (

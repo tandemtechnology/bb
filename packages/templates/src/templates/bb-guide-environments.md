@@ -107,6 +107,15 @@ Making your repo work with bb:
 
   bb environment archive-threads <id>     Archive all threads in an environment
 
+  When the last thread of a managed worktree environment is archived or
+  deleted, bb destroys the environment: it stops the agent process, then
+  stops every process whose working directory is inside the worktree
+  (background jobs the agent left behind, and also shells, editors, or
+  servers you started there yourself), then removes the worktree and its
+  branch. Each process gets SIGTERM, then SIGKILL after a short grace
+  period. Move your own shells out of the worktree first if you want to
+  keep them.
+
   bb environment pull-request show <id>   Inspect a pull request
   bb environment pull-request ready <id>  Mark a pull request ready
   bb environment pull-request draft <id>  Convert a pull request to draft
@@ -134,6 +143,11 @@ Remote access (bb connect):
   running and reconnects on restart (no foreground process).
   Without an installed bb, pair via npm:
   `npx -p bb-app@latest bb connect --code <code> --server <url>`.
+
+  In a source checkout, `pnpm dev` automatically points the unpaired Connect
+  settings and code-only pairing at that worktree's local Cloud origin through
+  `BB_DEV_CONNECT_BASE_URL`. Explicit `--server` and `--base-url` targets still
+  win, so the dev bb can also pair with getbb.app.
 
   bb connect status                       Show the server's connect status
   bb connect off                          Disconnect and forget the pairing

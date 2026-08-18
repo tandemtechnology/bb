@@ -7,8 +7,10 @@ import {
   dynamicToolSchema,
   instructionModeSchema,
   pendingInteractionResolutionSchema,
+  permissionModeSchema,
   promptInputSchema,
   projectSourceCheckoutSchema,
+  providerForkSchema,
   threadGitDiffResponseSchema,
   workspaceProvisionTypeSchema,
   runtimeThreadExecutionOptionsSchema,
@@ -20,6 +22,8 @@ import {
   clientTurnRequestIdSchema,
   gitBranchNameSchema,
   jsonObjectSchema,
+  jsonValueSchema,
+  providerNativeSkillRootsSchema,
   BRANCH_LIST_LIMIT_MAX,
   BRANCH_LIST_QUERY_MAX_LENGTH,
   FILE_LIST_LIMIT_MAX,
@@ -34,8 +38,20 @@ import {
   providerCliInstallRequestSchema,
   providerCliStatusResponseSchema,
 } from "./local.js";
+import { workspaceResolutionFailureSchema } from "./workspace.js";
+import { HOST_ARTIFACT_MAX_BYTES } from "./protocol.js";
 
-export const HOST_DAEMON_PROTOCOL_VERSION = 91 as const;
+export {
+  DAEMON_BUNDLED_PROVIDER_BRIDGE_IDS,
+  HOST_ARTIFACT_MAX_BYTES,
+  HOST_DAEMON_PROTOCOL_VERSION,
+} from "./protocol.js";
+export {
+  workspaceResolutionFailureCodeSchema,
+  workspaceResolutionFailureSchema,
+  type WorkspaceResolutionFailure,
+  type WorkspaceResolutionFailureCode,
+} from "./workspace.js";
 
 export {
   BRANCH_LIST_LIMIT_MAX,
@@ -84,29 +100,6 @@ export type HostDaemonConnectTunnelIdentity = z.infer<
   typeof hostDaemonConnectTunnelIdentitySchema
 >;
 
-export const workspaceResolutionFailureCodeSchema = z.enum([
-  "path_not_found",
-  "not_git_repo",
-  "not_worktree",
-  "workspace_type_mismatch",
-  "permission_denied",
-  "unknown_environment",
-  "unknown",
-]);
-export const workspaceResolutionFailureSchema = z
-  .object({
-    code: workspaceResolutionFailureCodeSchema,
-    workspacePath: z.string().min(1),
-    message: z.string().min(1),
-  })
-  .strict();
-export type WorkspaceResolutionFailureCode = z.infer<
-  typeof workspaceResolutionFailureCodeSchema
->;
-export type WorkspaceResolutionFailure = z.infer<
-  typeof workspaceResolutionFailureSchema
->;
-
 const hostDaemonThreadTargetSchema = z
   .object({
     environmentId: z.string().min(1),
@@ -140,6 +133,14 @@ export const hostDaemonInjectedSkillSourceSchema = z.discriminatedUnion(
         skillFilePath: z.string().min(1),
       })
       .strict(),
+    hostDaemonInjectedSkillSourceBaseSchema
+      .extend({
+        kind: z.literal("host-path"),
+        sourceType: z.enum(["shared-user", "shared-project"]),
+        sourceRootPath: z.string().min(1),
+        skillFilePath: z.string().min(1),
+      })
+      .strict(),
   ],
 );
 export type HostDaemonInjectedSkillSource = z.infer<
@@ -166,6 +167,7 @@ export const hostDaemonAcpLaunchSpecSchema = z
       .optional(),
     reasoningCli: acpReasoningCliSchema.optional(),
     nativeReasoning: acpNativeReasoningSchema.optional(),
+    nativeSkillRoots: providerNativeSkillRootsSchema.optional(),
     permissionCli: acpPermissionCliSchema.optional(),
   })
   .strict();
@@ -185,6 +187,7 @@ export function normalizeHostDaemonAcpLaunchSpec(
     modelCli,
     reasoningCli,
     nativeReasoning,
+    nativeSkillRoots,
     permissionCli,
   } = spec;
   const permissionCliHasMode =
@@ -202,11 +205,72 @@ export function normalizeHostDaemonAcpLaunchSpec(
       : {}),
     ...(reasoningCli !== undefined ? { reasoningCli } : {}),
     ...(nativeReasoning !== undefined ? { nativeReasoning } : {}),
+    ...(nativeSkillRoots !== undefined ? { nativeSkillRoots } : {}),
     ...(permissionCli !== undefined && permissionCliHasMode
       ? { permissionCli }
       : {}),
   };
 }
+
+/**
+ * How the daemon obtains the provider bridge for a provider. Every provider is
+ * plugin-declared, so every command that reaches a bridge carries one of these
+ * — the source says which of the two delivery paths to take rather than
+ * leaving the daemon to infer it from an absent field:
+ *
+ * - `"artifact"`: download the plugin's content-addressed host artifact from
+ *   the server by digest, verify the bytes, cache it under the daemon data dir,
+ *   and run it with the daemon's node through the bridge bootstrap.
+ * - `"daemon-bundled"`: run the named bridge from the daemon's own bundle. Pi
+ *   is the only one, because its agent tree cannot be inlined into a
+ *   relocatable artifact ({@link DAEMON_BUNDLED_PROVIDER_BRIDGE_IDS}).
+ */
+export const hostDaemonBridgeLaunchSchema = z
+  .object({
+    // The plugin that ships this bridge. It names the artifact to fetch, and
+    // it scopes the bridge process's own directories on the host — a bridge is
+    // a `bb.host` artifact like any other, so it gets the same plugin-scoped
+    // data directory a host worker does.
+    pluginId: z.string().min(1),
+    source: z.discriminatedUnion("kind", [
+      z
+        .object({
+          kind: z.literal("artifact"),
+          digest: z.string().regex(/^[a-f0-9]{64}$/u),
+          byteLength: z
+            .number()
+            .int()
+            .positive()
+            .max(HOST_ARTIFACT_MAX_BYTES),
+        })
+        .strict(),
+      z
+        .object({
+          kind: z.literal("daemon-bundled"),
+          id: z.string().min(1),
+        })
+        .strict(),
+    ]),
+    // The provider's server-validated capabilities, exactly the facts the
+    // runtime enforces before a command reaches the bridge: which execution
+    // options it accepts (permission modes, service tier) and which thread
+    // operations it offers (archive, rename, fork). The daemon has no
+    // registry, so without these it would have to guess a baseline and reject
+    // work the server already accepted.
+    capabilities: z
+      .object({
+        supportsServiceTier: z.boolean(),
+        permissionModes: z.array(permissionModeSchema).min(1),
+        supportsThreadArchive: z.boolean(),
+        supportsThreadRename: z.boolean(),
+        fork: providerForkSchema,
+      })
+      .strict(),
+  })
+  .strict();
+export type HostDaemonBridgeLaunch = z.infer<
+  typeof hostDaemonBridgeLaunchSchema
+>;
 
 const hostDaemonThreadRuntimeContextSchema = z
   .object({
@@ -214,20 +278,12 @@ const hostDaemonThreadRuntimeContextSchema = z
     projectId: z.string().min(1),
     providerId: z.string().min(1),
     acpLaunchSpec: hostDaemonAcpLaunchSpecSchema.optional(),
+    bridgeLaunch: hostDaemonBridgeLaunchSchema,
     options: runtimeThreadExecutionOptionsSchema,
-    /**
-     * Project-scoped environment for the provider session, already resolved by
-     * the server (secret values read out of their files).
-     *
-     * Deliberately not part of `options`: `turnResumeContextSchema` omits
-     * `options`, and execution options drive session-restart comparison, which
-     * this should not participate in. Resolved values can be secrets, so they
-     * must not be logged or persisted.
-     */
-    projectEnvVars: z.record(z.string(), z.string()),
     instructions: z.string().min(1),
     dynamicTools: z.array(dynamicToolSchema),
     injectedSkillSources: z.array(hostDaemonInjectedSkillSourceSchema),
+    projectEnvVars: z.record(z.string(), z.string()),
     disallowedTools: z.array(z.string()).optional(),
     instructionMode: instructionModeSchema,
   })
@@ -323,6 +379,24 @@ export const threadStartCommandSchema = hostDaemonThreadTargetSchema
     refineGroupedInputMatchesFlatInput(value, ctx);
   });
 
+export const threadRewindPrepareCommandSchema = hostDaemonThreadTargetSchema
+  .merge(hostDaemonThreadRuntimeContextSchema)
+  .extend({
+    type: z.literal("thread.rewind.prepare"),
+    /** Server-minted per-attempt staging id; each lease owns one staged fork. */
+    leaseId: z.string().min(1),
+    sourceProviderThreadId: z.string().min(1),
+    retainThroughProviderCheckpoint: z.string().min(1),
+  })
+  .strict();
+
+export const threadRewindDiscardCommandSchema = hostDaemonThreadTargetSchema
+  .extend({
+    type: z.literal("thread.rewind.discard"),
+    leaseId: z.string().min(1),
+  })
+  .strict();
+
 export const turnSubmitTargetSchema = z.discriminatedUnion("mode", [
   z.object({
     mode: z.literal("start"),
@@ -350,15 +424,27 @@ const turnSubmitCommandSchema = hostDaemonThreadTargetSchema
     inputGroups: z.array(z.array(promptInputSchema).min(1)).min(1).optional(),
     options: runtimeThreadExecutionOptionsSchema,
     acpLaunchSpec: hostDaemonAcpLaunchSpecSchema.optional(),
+    bridgeLaunch: hostDaemonBridgeLaunchSchema,
     resumeContext: turnResumeContextSchema,
     target: turnSubmitTargetSchema,
   })
   .strict()
   .superRefine(refineGroupedInputMatchesFlatInput);
 
+/**
+ * `interrupt` stops a live turn: the daemon waits for the runtime to learn the
+ * active turn so the provider stop carries the right turn id. `release` only
+ * unloads a runtime the server already knows is idle, so the daemon skips that
+ * wait and the server leaves thread lifecycle state alone.
+ */
+export const threadStopIntentSchema = z.enum(["interrupt", "release"]);
+
+export type ThreadStopIntent = z.infer<typeof threadStopIntentSchema>;
+
 export const threadStopCommandSchema = hostDaemonThreadTargetSchema
   .extend({
     type: z.literal("thread.stop"),
+    intent: threadStopIntentSchema,
   })
   .strict();
 
@@ -367,6 +453,7 @@ const threadGoalClearCommandSchema = hostDaemonThreadTargetSchema
     type: z.literal("thread.goal.clear"),
     options: runtimeThreadExecutionOptionsSchema,
     acpLaunchSpec: hostDaemonAcpLaunchSpecSchema.optional(),
+    bridgeLaunch: hostDaemonBridgeLaunchSchema,
     resumeContext: turnResumeContextSchema,
   })
   .strict();
@@ -390,6 +477,7 @@ const threadArchiveCommandSchema = hostDaemonThreadWorkspaceTargetSchema
     type: z.literal("thread.archive"),
     providerId: z.string().min(1),
     providerThreadId: z.string().min(1),
+    bridgeLaunch: hostDaemonBridgeLaunchSchema,
   })
   .strict();
 
@@ -402,6 +490,7 @@ const threadUnarchiveCommandSchema = hostDaemonThreadTargetSchema
     type: z.literal("thread.unarchive"),
     providerId: z.string().min(1),
     providerThreadId: z.string().min(1),
+    bridgeLaunch: hostDaemonBridgeLaunchSchema,
   })
   .strict();
 
@@ -631,10 +720,42 @@ const hostPickFolderCommandSchema = z
   })
   .strict();
 
-const hostCaffeinateCommandSchema = z
+const pluginHostArtifactSchema = z
   .object({
-    type: z.literal("host.caffeinate"),
-    enabled: z.boolean(),
+    digest: z.string().regex(/^[a-f0-9]{64}$/u),
+    byteLength: z.number().int().positive().max(HOST_ARTIFACT_MAX_BYTES),
+  })
+  .strict();
+
+const MAX_NODE_TIMER_DELAY_MS = 2_147_483_647;
+
+const pluginHostCallCommandSchema = z
+  .object({
+    type: z.literal("plugin.host.call"),
+    pluginId: z.string().min(1),
+    generation: z.string().min(1),
+    artifact: pluginHostArtifactSchema,
+    callId: z.string().min(1),
+    method: z.string().min(1),
+    input: jsonValueSchema,
+    timeoutMs: z.number().int().positive().max(MAX_NODE_TIMER_DELAY_MS),
+  })
+  .strict();
+
+const pluginHostCancelCommandSchema = z
+  .object({
+    type: z.literal("plugin.host.cancel"),
+    pluginId: z.string().min(1),
+    generation: z.string().min(1),
+    callId: z.string().min(1),
+  })
+  .strict();
+
+const pluginHostDisposeCommandSchema = z
+  .object({
+    type: z.literal("plugin.host.dispose"),
+    pluginId: z.string().min(1),
+    generation: z.string().min(1),
   })
   .strict();
 
@@ -694,6 +815,7 @@ const hostListCommandsCommandSchema = z
     type: z.literal("host.list_commands"),
     providerId: z.string().min(1),
     cwd: z.string().min(1).nullable(),
+    nativeSkillRoots: providerNativeSkillRootsSchema.optional(),
   })
   .strict();
 
@@ -710,6 +832,8 @@ export const skillRootKindSchema = z.enum([
   "bb-builtin",
   "provider-project",
   "provider-user",
+  "shared-project",
+  "shared-user",
   "plugin",
 ]);
 export type SkillRootKind = z.infer<typeof skillRootKindSchema>;
@@ -736,20 +860,24 @@ export type DiscoveredSkill = z.infer<typeof discoveredSkillSchema>;
  * originating root. Same root-resolution rules as `host.list_commands`:
  * `cwd: null` skips the project roots and returns only user-home/bb scopes.
  */
-const hostListSkillsCommandSchema = z.object({
-  type: z.literal("host.list_skills"),
-  providerId: z.string().min(1),
-  cwd: z.string().min(1).nullable(),
-});
+const hostListSkillsCommandSchema = z
+  .object({
+    type: z.literal("host.list_skills"),
+    providerId: z.string().min(1),
+    cwd: z.string().min(1).nullable(),
+    nativeSkillRoots: providerNativeSkillRootsSchema.optional(),
+  })
+  .strict();
 
 /** User-owned local skill scopes that can be deleted after path confinement. */
 export const deletableSkillScopeSchema = z.enum([
   "bb-user",
   "bb-project",
-  "claude-user",
-  "claude-project",
-  "codex-user",
-  "codex-project",
+  // The daemon only distinguishes bb roots (derived locally) from provider
+  // roots (an explicit `rootPath` from server-side discovery), so naming the
+  // provider here bought nothing and closed the vocabulary to plugins.
+  "provider-user",
+  "provider-project",
 ]);
 export type DeletableSkillScope = z.infer<typeof deletableSkillScopeSchema>;
 
@@ -880,6 +1008,7 @@ const providerListModelsCommandSchema = z.object({
   type: z.literal("provider.list_models"),
   providerId: z.string().min(1),
   acpLaunchSpec: hostDaemonAcpLaunchSpecSchema.optional(),
+  bridgeLaunch: hostDaemonBridgeLaunchSchema,
   cwd: z.string().min(1).optional(),
 });
 
@@ -1025,6 +1154,8 @@ const environmentDestroyCommandSchema = hostDaemonWorkspaceTargetSchema
 const workspaceStatusCommandSchema = hostDaemonWorkspaceTargetSchema.extend({
   type: z.literal("workspace.status"),
   mergeBaseBranch: gitBranchNameSchema.optional(),
+  maxUntrackedLineStatFiles: z.number().int().positive(),
+  maxUntrackedLineStatBytes: z.number().int().positive(),
 });
 
 const workspaceDiffCommandSchema = hostDaemonWorkspaceTargetSchema.extend({
@@ -1032,11 +1163,13 @@ const workspaceDiffCommandSchema = hostDaemonWorkspaceTargetSchema.extend({
   target: workspaceDiffTargetSchema,
   maxDiffBytes: z.number().int().positive(),
   maxFileListBytes: z.number().int().positive(),
+  maxUntrackedFiles: z.number().int().positive(),
 });
 
 const workspaceDiffFilesCommandSchema = hostDaemonWorkspaceTargetSchema.extend({
   type: z.literal("workspace.diffFiles"),
   target: workspaceDiffTargetSchema,
+  maxFiles: z.number().int().positive(),
 });
 
 const workspaceDiffPatchCommandSchema = hostDaemonWorkspaceTargetSchema.extend({
@@ -1174,6 +1307,7 @@ const workspaceDiffFilesResultSchema = z.discriminatedUnion("outcome", [
       files: z.array(rawDiffFileStatSchema),
       shortstat: z.string(),
       mergeBaseRef: z.string().nullable(),
+      truncated: z.boolean(),
     })
     .strict(),
   z
@@ -1239,11 +1373,16 @@ const pathListResultSchema = z.object({
 
 const hostPathMutationResultSchema = z.object({ ok: z.literal(true) }).strict();
 
-const hostCaffeinateResultSchema = z
-  .object({
-    enabled: z.boolean(),
-    supported: z.boolean(),
-  })
+const pluginHostCallResultSchema = z
+  .object({ output: jsonValueSchema })
+  .strict();
+
+const pluginHostCancelResultSchema = z
+  .object({ cancelled: z.boolean() })
+  .strict();
+
+const pluginHostDisposeResultSchema = z
+  .object({ disposed: z.boolean() })
   .strict();
 
 // No `truncated` here, unlike `pathListResultSchema`: the daemon returns the
@@ -1341,6 +1480,11 @@ const threadStartResultSchema = z.object({
 const turnSubmitResultSchema = z.object({
   appliedAs: z.enum(["new-turn", "steer"]),
 });
+const threadStopResultSchema = z
+  .object({
+    providerCheckpointId: z.string().min(1).nullable(),
+  })
+  .strict();
 const emptyCommandResultSchema = z.object({});
 const projectPathResultSchema = z.object({ path: z.string().min(1) }).strict();
 const projectInspectResultSchema = projectPathResultSchema
@@ -1547,6 +1691,24 @@ function defineHostDaemonCommandDescriptor<
 }
 
 export const hostDaemonCommandRegistry = {
+  "thread.rewind.discard": defineHostDaemonCommandDescriptor({
+    type: "thread.rewind.discard",
+    schema: threadRewindDiscardCommandSchema,
+    resultSchema: emptyCommandResultSchema,
+    transport: "settled",
+    retryable: false,
+    flushEventsBeforeResult: true,
+    envLane: "read",
+  }),
+  "thread.rewind.prepare": defineHostDaemonCommandDescriptor({
+    type: "thread.rewind.prepare",
+    schema: threadRewindPrepareCommandSchema,
+    resultSchema: threadStartResultSchema,
+    transport: "settled",
+    retryable: false,
+    flushEventsBeforeResult: true,
+    envLane: "read",
+  }),
   "thread.start": defineHostDaemonCommandDescriptor({
     type: "thread.start",
     schema: threadStartCommandSchema,
@@ -1568,7 +1730,7 @@ export const hostDaemonCommandRegistry = {
   "thread.stop": defineHostDaemonCommandDescriptor({
     type: "thread.stop",
     schema: threadStopCommandSchema,
-    resultSchema: emptyCommandResultSchema,
+    resultSchema: threadStopResultSchema,
     transport: "settled",
     retryable: false,
     flushEventsBeforeResult: true,
@@ -1799,12 +1961,30 @@ export const hostDaemonCommandRegistry = {
     flushEventsBeforeResult: false,
     envLane: null,
   }),
-  "host.caffeinate": defineHostDaemonCommandDescriptor({
-    type: "host.caffeinate",
-    schema: hostCaffeinateCommandSchema,
-    resultSchema: hostCaffeinateResultSchema,
+  "plugin.host.call": defineHostDaemonCommandDescriptor({
+    type: "plugin.host.call",
+    schema: pluginHostCallCommandSchema,
+    resultSchema: pluginHostCallResultSchema,
     transport: "onlineRpc",
     retryable: false,
+    flushEventsBeforeResult: false,
+    envLane: null,
+  }),
+  "plugin.host.cancel": defineHostDaemonCommandDescriptor({
+    type: "plugin.host.cancel",
+    schema: pluginHostCancelCommandSchema,
+    resultSchema: pluginHostCancelResultSchema,
+    transport: "onlineRpc",
+    retryable: true,
+    flushEventsBeforeResult: false,
+    envLane: null,
+  }),
+  "plugin.host.dispose": defineHostDaemonCommandDescriptor({
+    type: "plugin.host.dispose",
+    schema: pluginHostDisposeCommandSchema,
+    resultSchema: pluginHostDisposeResultSchema,
+    transport: "onlineRpc",
+    retryable: true,
     flushEventsBeforeResult: false,
     envLane: null,
   }),
@@ -2087,13 +2267,6 @@ function hostDaemonCommandDescriptorsForTransport<
   );
 }
 
-function hostDaemonCommandDescriptorsForRetryableOnlineRpc(): HostDaemonRetryableOnlineRpcCommandDescriptor[] {
-  return hostDaemonCommandDescriptorsForTransport("onlineRpc").filter(
-    (descriptor): descriptor is HostDaemonRetryableOnlineRpcCommandDescriptor =>
-      descriptor.retryable,
-  );
-}
-
 function hostDaemonCommandTypesForTransport<
   const Transport extends HostDaemonCommandTransport,
 >(transport: Transport): HostDaemonCommandTypeForTransport<Transport>[] {
@@ -2115,19 +2288,6 @@ function hostDaemonCommandSchemaForTransport<
       HostDaemonSchemaForTransport<Transport>,
       HostDaemonSchemaForTransport<Transport>,
       ...HostDaemonSchemaForTransport<Transport>[],
-    ],
-  );
-}
-
-function hostDaemonRetryableOnlineRpcCommandUnionSchema(): z.ZodType<HostDaemonRetryableOnlineRpcCommand> {
-  const schemas = hostDaemonCommandDescriptorsForRetryableOnlineRpc().map(
-    (descriptor) => descriptor.schema,
-  );
-  return z.union(
-    schemas as [
-      HostDaemonRetryableOnlineRpcCommandSchema,
-      HostDaemonRetryableOnlineRpcCommandSchema,
-      ...HostDaemonRetryableOnlineRpcCommandSchema[],
     ],
   );
 }
@@ -2190,8 +2350,6 @@ export const hostDaemonCommandSchema =
   hostDaemonCommandSchemaForTransport("settled");
 export const hostDaemonOnlineRpcCommandSchema =
   hostDaemonCommandSchemaForTransport("onlineRpc");
-export const hostDaemonRetryableOnlineRpcCommandSchema =
-  hostDaemonRetryableOnlineRpcCommandUnionSchema();
 export const hostDaemonRpcCommandSchema = z.union([
   hostDaemonOnlineRpcCommandSchema,
   hostDaemonCommandSchema,

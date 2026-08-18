@@ -17,10 +17,10 @@ import type {
 } from "./rpc-contract.js";
 
 /**
- * The `@bb/plugin-sdk/app` contract (plugin design §5.2) — pure types with no
+ * The `@get-bb/plugin-sdk/app` contract (plugin design §5.2) — pure types with no
  * side effects. The BB app imports these to keep its real implementation in
  * sync (`satisfies PluginSdkApp`). Plugin authors import the same shapes through
- * `@bb/plugin-sdk/app`.
+ * `@get-bb/plugin-sdk/app`.
  *
  * Per-slot props are versioned contracts: additive-only within an SDK major.
  */
@@ -55,9 +55,26 @@ export interface PluginNavPanelProps {
   subPath: string;
 }
 
-/** Props passed to a panel tab opened by a `threadPanelAction`. */
+/**
+ * Props passed to a panel tab opened by a `threadPanelAction`.
+ *
+ * This slot is rendered only for an existing thread. Use
+ * `experimental_newThreadPanelAction` for the root New thread screen.
+ */
 export interface PluginThreadPanelProps {
   threadId: string;
+  /**
+   * The JSON value the action's `openPanel` call passed (round-tripped
+   * through persistence, so the tab restores across reloads); null when the
+   * action opened the panel without params.
+   */
+  params: JsonValue | null;
+}
+
+/** Props passed to a panel tab opened by `experimental_newThreadPanelAction`. */
+export interface PluginNewThreadPanelProps {
+  /** Project selected in the root composer; null in projectless compose. */
+  projectId: string | null;
   /**
    * The JSON value the action's `openPanel` call passed (round-tripped
    * through persistence, so the tab restores across reloads); null when the
@@ -110,6 +127,13 @@ export interface PluginThreadListProps {
    * shipping a second search box.
    */
   searchQuery: string;
+  /**
+   * BB's thread list, bound to this sidebar instance. Render it to delegate
+   * conditionally without re-entering plugin replacement resolution.
+   *
+   * @experimental Audit before relying on this as a stable contract.
+   */
+  experimental_Original: ComponentType;
 }
 
 /**
@@ -150,6 +174,13 @@ export interface PluginFileOpenerSource {
 export interface PluginFileOpenerProps {
   path: string;
   source: PluginFileOpenerSource;
+  /**
+   * BB's file preview, bound to this file. Render it to delegate conditionally
+   * without re-entering plugin replacement resolution.
+   *
+   * @experimental Audit before relying on this as a stable contract.
+   */
+  experimental_Original: ComponentType;
 }
 
 /**
@@ -221,6 +252,37 @@ export interface PluginNavPanelRegistration {
   path: string;
   component: ComponentType<PluginNavPanelProps>;
   /**
+   * Ordered, non-closable tabs shown in this page's host-owned right panel.
+   * BB owns selection and persistence and always includes its native Browser
+   * and Terminal tools beside them. Components mount only while their tab is
+   * active and the panel is open, and receive the same `subPath` as the page
+   * component.
+   *
+   * Experimental: see docs/api_to_audit.md.
+   */
+  experimental_fixedTabs?: readonly {
+    /** Unique within this nav panel; letters, digits, `-`, `_`. */
+    id: string;
+    title: string;
+    /** Icon hint (BB icon name); unknown names fall back to a generic icon. */
+    icon: string;
+    component: ComponentType<PluginNavPanelProps>;
+    /** `flush` lets the component own padding and scrolling. */
+    layout?: "padded" | "flush";
+  }[];
+  /**
+   * Optional presentational component rendered at the trailing edge of this
+   * panel's sidebar row. It receives no props so it can own a narrow live
+   * value through the ordinary SDK hooks without coupling that state to the
+   * host sidebar. The host does not mount it on compact viewports and clips it
+   * to a small, single-line box on wider viewports. It shares the trailing
+   * action column, fading out for the host's options button on hover or focus;
+   * do not render controls or rely on unbounded content here.
+   *
+   * Experimental: see docs/api_to_audit.md.
+   */
+  experimental_sidebarAccessory?: ComponentType;
+  /**
    * Optional component rendered on the right side of the shared title bar
    * (e.g. a sync button or a count). Contained separately from the body: a
    * throwing headerContent is hidden without breaking the title bar.
@@ -228,7 +290,12 @@ export interface PluginNavPanelRegistration {
   headerContent?: ComponentType<PluginNavPanelProps>;
 }
 
-/** Context handed to a `threadPanelAction`'s `run`. */
+/**
+ * Context handed to a `threadPanelAction`'s `run`.
+ *
+ * The action is thread-only and is never offered on the root New thread
+ * screen, so `threadId` is always present.
+ */
 export interface PluginThreadPanelActionContext {
   /** The thread whose panel launcher invoked the action. */
   threadId: string;
@@ -272,6 +339,37 @@ export interface PluginThreadPanelActionRegistration {
    * contained and logged; they never break the launcher.
    */
   run?(context: PluginThreadPanelActionContext): void | Promise<void>;
+}
+
+/** Context handed to an `experimental_newThreadPanelAction`'s `run`. */
+export interface PluginNewThreadPanelActionContext {
+  /** Project selected in the root composer; null in projectless compose. */
+  projectId: string | null;
+  /**
+   * Open a tab in the root New thread screen's side panel rendering this
+   * action's `component`. The title, params, deduplication, and error
+   * semantics match `threadPanelAction`.
+   */
+  openPanel(options?: { title?: string; params?: JsonValue }): void;
+}
+
+/** Registration for the root New thread screen's panel Actions list. */
+export interface PluginNewThreadPanelActionRegistration {
+  /** Unique within this slot for the plugin; letters, digits, `-`, `_`. */
+  id: string;
+  /** Label of the action row in the panel's new-tab launcher. */
+  title: string;
+  /** Icon hint (BB icon name) used when the plugin ships no logo. */
+  icon?: string;
+  /** Rendered inside every panel tab this action opens. */
+  component: ComponentType<PluginNewThreadPanelProps>;
+  /** Host framing; matches `threadPanelAction`. */
+  layout?: "padded" | "flush";
+  /**
+   * Runs when the user activates the action. Omitted = immediately open a
+   * panel tab with defaults. Errors are contained and logged.
+   */
+  run?(context: PluginNewThreadPanelActionContext): void | Promise<void>;
 }
 
 export interface PluginPendingInteractionRegistration {
@@ -375,7 +473,7 @@ export interface PluginSidebarThread {
   parentThreadId: string | null;
   sectionId: string | null;
   /** How this thread came to exist under its parent; null for root threads. */
-  originKind: "fork" | "side-chat" | null;
+  originKind: "fork" | null;
   /** The plugin that spawned it, or null for non-plugin origins. */
   originPluginId: string | null;
   /** The agent provider this thread runs on, e.g. "codex", "claude-code". */
@@ -565,10 +663,13 @@ export interface PluginSidebarThreadSplit {
  * Replace the sidebar's thread list with a plugin component.
  *
  * Unlike every other slot, this one is EXCLUSIVE: two lists cannot share one
- * scroll area. The built-in list stays the default; the user picks a provider
- * in Settings → Appearance, stored per client. A provider that is uninstalled,
- * disabled, or crashing falls back to the built-in list rather than leaving
- * the user with no sidebar.
+ * scroll area. Registering activates the replacement while the plugin is
+ * enabled. If multiple plugins register one, the first in deterministic slot
+ * order is active by default; removing it reveals the next. The user can pin
+ * BB's list or a specific provider under Settings → Appearance. A plugin can
+ * also use its own setting and render `experimental_Original` conditionally.
+ * An absent or crashing replacement falls back to BB's list rather than
+ * leaving the user with no sidebar.
  *
  * The plugin gets the scrolling list and nothing else. The New-thread button,
  * the search field, the plugin nav rows, and the footer stay host-rendered in
@@ -578,21 +679,22 @@ export interface PluginSidebarThreadSplit {
 export interface PluginThreadListRegistration {
   /** Unique within the plugin; letters, digits, `-`, `_`. */
   id: string;
-  /** Label in the Settings → Appearance → Sidebar picker. */
+  /** Label shown in Settings → Appearance and capability details. */
   title: string;
-  /** Optional one-line description under the title in that picker. */
+  /** Optional one-line description shown with the provider choice. */
   description?: string;
   component: ComponentType<PluginThreadListProps>;
 }
 
 /**
- * Register this plugin as a viewer/editor for file extensions. The user
- * picks (and can set as default) an opener per extension via the file tab's
- * "Open with" menu; matching files opened in the panel then render
- * `component` in a plugin tab instead of the built-in preview. Applies to
- * working-tree, host, and thread-storage files — never to git-ref snapshots
- * (diff views always use the built-in preview). The built-in preview stays
- * one menu click away, and a missing/disabled opener falls back to it.
+ * Register this plugin as a viewer/editor for file extensions. By default,
+ * matching files render the first applicable opener in deterministic slot
+ * order. The user can pin BB's preview or a specific opener per extension
+ * under Settings → Files. The file tab's "Open with" menu can override that
+ * choice for one open. A plugin can also use its own setting and render
+ * `experimental_Original` conditionally. Applies to working-tree, host, and
+ * thread-storage files — never to git-ref snapshots (diff views always use
+ * BB's preview).
  */
 export interface PluginFileOpenerRegistration {
   /** Unique within the plugin; letters, digits, `-`, `_`. */
@@ -678,6 +780,31 @@ export interface PluginMessageActionRegistration {
   run(context: PluginMessageActionContext): void | Promise<void>;
 }
 
+/**
+ * Supply the inline React mark bb draws for one agent provider.
+ *
+ * A manifest `branding.icon` (or a provider's `logoUrl`) is fetched and drawn
+ * through `<img>`, a separate document where `currentColor` resolves to black
+ * — invisible on dark themes and unreachable from app CSS. A component is
+ * rendered inline, so it inherits the app's theme colors and the host's sizing
+ * classes. Register a static color logo as a file and a theme-aware mark here.
+ *
+ * The host passes only `className` (sizing plus the provider's color class);
+ * the component must render an inline SVG (or other inline markup) and must
+ * not fetch. One registration per provider id per plugin; when two plugins
+ * claim the same provider id the host keeps the first by plugin id and warns.
+ */
+export interface PluginProviderIconRegistration {
+  /**
+   * The provider this mark is for — the id bb knows the provider by (the
+   * provider declaration's id, e.g. `codex` or `acp-cursor`), not the plugin
+   * id. Letters, digits, `-`, `_`.
+   */
+  providerId: string;
+  /** Inline, theme-aware mark. Receives the host's sizing/color className. */
+  icon: ComponentType<{ className?: string }>;
+}
+
 // ---------------------------------------------------------------------------
 // definePluginApp
 // ---------------------------------------------------------------------------
@@ -686,7 +813,19 @@ export interface PluginAppSlots {
   homepageSection(registration: PluginHomepageSectionRegistration): void;
   settingsSection(registration: PluginSettingsSectionRegistration): void;
   navPanel(registration: PluginNavPanelRegistration): void;
+  /**
+   * Add an action to an existing thread's panel launcher. This slot is
+   * thread-only; use `experimental_newThreadPanelAction` for root compose.
+   */
   threadPanelAction(registration: PluginThreadPanelActionRegistration): void;
+  /**
+   * Add an action to the root New thread screen's panel launcher (see
+   * {@link PluginNewThreadPanelActionRegistration}). Experimental: see
+   * docs/api_to_audit.md.
+   */
+  experimental_newThreadPanelAction(
+    registration: PluginNewThreadPanelActionRegistration,
+  ): void;
   pendingInteraction(registration: PluginPendingInteractionRegistration): void;
   sidebarFooterAction(
     registration: PluginSidebarFooterActionRegistration,
@@ -708,6 +847,13 @@ export interface PluginAppSlots {
   fileOpener(registration: PluginFileOpenerRegistration): void;
   messageDirective(registration: PluginMessageDirectiveRegistration): void;
   messageAction(registration: PluginMessageActionRegistration): void;
+  /**
+   * Draw one agent provider's icon with an inline React component instead of
+   * its `<img>`-rendered logo file (see
+   * {@link PluginProviderIconRegistration}). Experimental: see
+   * docs/api_to_audit.md.
+   */
+  experimental_providerIcon(registration: PluginProviderIconRegistration): void;
 }
 
 export interface PluginAppComposer {
@@ -1076,6 +1222,13 @@ export interface ThreadChatProps {
  * composer props.
  */
 export interface NewThreadRequest {
+  /**
+   * The selected project id. Choosing "Don't work in a project" submits BB's
+   * personal-project id (not `null`) together with a `personal` workspace
+   * environment. Forward those fields unchanged to `threads.spawn`; if the
+   * plugin needs project metadata, request it from the plugin backend with
+   * `bb.sdk.projects.list({ includePersonal: true })`.
+   */
   projectId: string;
   providerId: string;
   model: string;
@@ -1104,7 +1257,11 @@ export interface NewThreadRequest {
  * exception to the no-host-components rule (§5.5), same additive versioning.
  */
 export interface NewThreadComposerProps {
-  /** Seeds the project picker. The user can change it. */
+  /**
+   * Seeds the project picker. The user can change it, including choosing
+   * "Don't work in a project"; see {@link NewThreadRequest.projectId} for the
+   * submitted projectless shape.
+   */
   defaultProjectId?: string;
   /**
    * Seeds the provider picker. Like every `default*` prop this is a SEED, not
@@ -1247,7 +1404,7 @@ export interface BbNavigate {
 
 // ---------------------------------------------------------------------------
 // The whole runtime surface. Declaration-versus-runtime parity is tested
-// against the actual `@bb/plugin-sdk/app` module namespace.
+// against the actual `@get-bb/plugin-sdk/app` module namespace.
 //
 // Components are deliberately NOT part of this surface (removed 2026-07-03,
 // plugin design §5.5): plugins vendor shadcn-style component source from the
@@ -1258,7 +1415,7 @@ export interface BbNavigate {
 // ---------------------------------------------------------------------------
 
 /**
- * Everything `@bb/plugin-sdk/app` resolves to at runtime. The BB app builds
+ * Everything `@get-bb/plugin-sdk/app` resolves to at runtime. The BB app builds
  * the real implementation and `satisfies` this interface; `bb plugin build`
  * shims the specifier to that object on `globalThis.__bbPluginRuntime`.
  */

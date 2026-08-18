@@ -4,7 +4,7 @@ import type {
 } from "@bb/config/bb-app-managed-config";
 import type { AppSurface } from "@bb/config/app-surface";
 import type { DbConnection } from "@bb/db";
-import type { FeatureFlags } from "@bb/domain";
+import type { FeatureFlags, ProviderNativeSkillRoots } from "@bb/domain";
 import type { Logger } from "@bb/logger";
 import type { PendingInteractionLifecycle } from "./services/interactions/pending-interactions.js";
 import type { MachineAuthService } from "./services/machine-auth.js";
@@ -17,6 +17,8 @@ import type { NotificationHub } from "./ws/hub.js";
 import type { WatchInterestCoordinator } from "./ws/watch-interests.js";
 import type { HostSharedPortCoordinator } from "./ws/host-shared-ports.js";
 import type { SkillTreeRegistry } from "./services/skills/injected-skills.js";
+import type { ProviderRegistryService } from "./services/providers/provider-registry.js";
+import type { PluginHostArtifactRegistry } from "./services/plugins/plugin-host-artifact-registry.js";
 
 export type ServerLogger = Pick<Logger, "debug" | "error" | "info" | "warn">;
 
@@ -30,10 +32,21 @@ export interface ServerRuntimeConfig {
   featureFlags: FeatureFlags;
   hostDaemonPort: number;
   inheritedSkillsRootPaths: string[];
+  inferenceFallbackModel: string;
   inferenceModel: string;
   isDevelopment: boolean;
+  /**
+   * Grace window (ms) after the last live thread in a managed environment is
+   * archived before its worktree is destroyed, during which an accidental
+   * archive can be undone losslessly. Defaults to
+   * {@link MANAGED_ENVIRONMENT_RETIRE_GRACE_MS}; set to 0 to destroy immediately.
+   */
+  managedEnvironmentRetireGraceMs: number;
+  /** Manifest URL of the reserved `bb-community` plugin marketplace. */
+  marketplaceUrl: string;
   openAiApiKey: string;
   serverPort: number;
+  sharedSkillRoots: ProviderNativeSkillRoots;
   threadStorageRootPath: string;
   transcriptionModel: string;
   appUrl?: string;
@@ -48,6 +61,8 @@ export interface AppDeps {
   logger: ServerLogger;
   machineAuth: MachineAuthService;
   pendingInteractions: PendingInteractionLifecycle;
+  providerRegistry: ProviderRegistryService;
+  pluginHostArtifacts: PluginHostArtifactRegistry;
   skillTreeRegistry: SkillTreeRegistry;
   telemetry: TelemetryService;
   terminalSessions: TerminalSessionLifecycle;
@@ -67,6 +82,8 @@ export type LifecycleDeps = Pick<
   | "hub"
   | "lifecycleDedupers"
   | "machineAuth"
+  | "providerRegistry"
+  | "pluginHostArtifacts"
   | "skillTreeRegistry"
   | "telemetry"
 >;

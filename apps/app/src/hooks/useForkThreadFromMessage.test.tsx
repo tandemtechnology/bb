@@ -30,6 +30,21 @@ vi.mock("@tanstack/react-query", async (importOriginal) => {
     ...actual,
     useQueryClient: () => ({
       fetchQuery: mocks.fetchQuery,
+      // findCachedProviderInfo scans cached execution-options responses for
+      // the source provider's fork capability.
+      getQueriesData: () => [
+        [
+          ["systemExecutionOptions"],
+          {
+            providers: [
+              {
+                id: "codex",
+                capabilities: { supportsFork: true },
+              },
+            ],
+          },
+        ],
+      ],
     }),
   };
 });
@@ -41,7 +56,6 @@ vi.mock("@/lib/root-compose-selection", () => ({
 function makeThread(overrides: Partial<Thread> = {}): Thread {
   const base: Thread = {
     archivedAt: null,
-    childOrigin: null,
     createdAt: 1,
     deletedAt: null,
     environmentId: "env_source",

@@ -35,14 +35,12 @@ import {
   useThemePreference,
   type ThemePreference,
 } from "@/hooks/useTheme";
-import { useHostDaemon } from "@/hooks/useHostDaemon";
+import { useHostDaemon, useLocalHostDaemonAccess } from "@/hooks/useHostDaemon";
 import { UsageLimitsSettingsSection } from "@/components/settings/UsageLimitsSettingsSection";
 import { SidebarThreadListSetting } from "@/components/settings/SidebarThreadListSetting";
-import {
-  PluginSettingsDetailSection,
-  PluginsSettingsSection,
-} from "@/components/settings/PluginsSettingsSection";
+import { SplitDimmingSetting } from "@/components/settings/SplitDimmingSetting";
 import { useSettingsNavState } from "@/components/settings/settings-nav";
+import { PluginSettingsPage } from "@/components/plugin/PluginSettings";
 import { FileOpenersSettingsSection } from "@/components/settings/FileOpenersSettingsSection";
 import { VoiceInputSettingsSection } from "@/components/settings/VoiceInputSettingsSection";
 import { CommunitySettingsSection } from "@/components/settings/CommunitySettingsSection";
@@ -51,6 +49,7 @@ import { KeyboardSettingsSection } from "@/components/settings/KeyboardSettingsS
 import { MachinesSettingsSection } from "@/components/settings/MachinesSettingsSection";
 import { ArchivedThreadsSettingsSection } from "@/components/settings/ArchivedThreadsSettingsSection";
 import { CliSkillsSettingsSection } from "@/components/settings/CliSkillsSettingsSection";
+import { MarketplacesSettingsSection } from "@/components/settings/MarketplacesSettingsSection";
 import {
   useUpdateGeneralSettings,
   useUpdateAppearance,
@@ -81,6 +80,11 @@ import {
   type WorkspaceOpenTargetCapability,
 } from "@/lib/workspace-open-target-preference";
 import { getWorkspaceOpenTargetFallbackLabel } from "@/components/workspace-open-target/workspace-open-target-display";
+import type { LocalHostDaemonAccessState } from "@/lib/local-host-daemon-access";
+import { openUrlInExternalBrowser } from "@/lib/url-open-routing";
+
+const LOCAL_EDITOR_INTEGRATION_DOCS_URL =
+  "https://github.com/get-bb/bb/blob/main/docs/multiple-devices.md#open-bb-from-another-browser";
 
 interface ThemePreferenceOption {
   label: string;
@@ -106,11 +110,13 @@ interface LocalOpenTargetPreferenceControlProps {
 }
 
 export interface LocalOpenTargetSettingsSectionProps {
+  accessState: LocalHostDaemonAccessState;
   directoryTargetId: StoredWorkspaceOpenTargetPreference;
   fileTargetId: StoredWorkspaceOpenTargetPreference;
   hasDaemon: boolean;
   onDirectoryTargetChange: (targetId: WorkspaceOpenTargetId) => void;
   onFileTargetChange: (targetId: WorkspaceOpenTargetId) => void;
+  onRequestAccess: () => Promise<boolean>;
   targets: WorkspaceOpenTarget[];
 }
 
@@ -127,12 +133,6 @@ export interface RewriteLocalhostLinksSettingsControlProps {
 export interface RootComposeBehaviorSettingsControlProps {
   navigateToThreadAfterCreate: boolean;
   onNavigateToThreadAfterCreateChange: (enabled: boolean) => void;
-}
-
-export interface CaffeinateSettingsControlProps {
-  disabled: boolean;
-  enabled: boolean;
-  onEnabledChange: (enabled: boolean) => void;
 }
 
 export interface SteerActiveThreadOnEnterSettingsControlProps {
@@ -172,12 +172,8 @@ export interface AppearanceSettingsSectionProps {
 }
 
 export interface GeneralSettingsSectionProps {
-  caffeinateAvailable: boolean;
-  caffeinateDisabled: boolean;
-  caffeinateEnabled: boolean;
   onReplayOnboarding: () => void;
   desktopBrowserAvailable: boolean;
-  onCaffeinateChange: (enabled: boolean) => void;
   navigateToThreadAfterCreate: boolean;
   onNavigateToThreadAfterCreateChange: (enabled: boolean) => void;
   onOpenLinksInAppBrowserChange: (enabled: boolean) => void;
@@ -211,11 +207,13 @@ export interface ExperimentsSettingsSectionProps {
   /** True while the config query hasn't loaded or a toggle write is in flight. */
   disabled: boolean;
   claudeCodeMockCliTrafficEnabled: boolean;
+  editMessagesEnabled: boolean;
   newOnboardingEnabled: boolean;
+  providerSessionReapingEnabled: boolean;
   onClaudeCodeMockCliTrafficEnabledChange: (enabled: boolean) => void;
+  onEditMessagesEnabledChange: (enabled: boolean) => void;
   onNewOnboardingEnabledChange: (enabled: boolean) => void;
-  onToolsHubEnabledChange: (enabled: boolean) => void;
-  toolsHubEnabled: boolean;
+  onProviderSessionReapingEnabledChange: (enabled: boolean) => void;
 }
 
 const THEME_PREFERENCE_OPTIONS: ReadonlyArray<ThemePreferenceOption> = [
@@ -262,7 +260,7 @@ const SETTINGS_DROPDOWN_CONTENT_CLASS =
 const CREATE_CUSTOM_PALETTE_PROMPT =
   "Create a custom bb palette. First run `bb theme dir` to find the custom theme directory. Ask me for the palette name and visual direction, then create `<theme-dir>/<name>/theme.css` with light and dark theme variables compatible with bb's theme tokens.";
 const PALETTE_SETTING_DESCRIPTION =
-  "Palettes change bb's colors across light and dark mode. Choose a built-in palette or create one from a prompt.";
+  "Palettes change bb's colors, including syntax colors in diffs and file previews. Choose a built-in palette or create one from a prompt.";
 
 // Renders the favicon glyph itself in the candidate color by using the
 // favicon image as a CSS mask, so the preview matches the resulting tab icon.
@@ -449,15 +447,87 @@ function LocalOpenTargetPreferenceControl({
 }
 
 export function LocalOpenTargetSettingsSection({
+  accessState,
   directoryTargetId,
   fileTargetId,
   hasDaemon,
   onDirectoryTargetChange,
   onFileTargetChange,
+  onRequestAccess,
   targets,
 }: LocalOpenTargetSettingsSectionProps) {
-  if (!hasDaemon) {
+  const [accessRequestPending, setAccessRequestPending] = useState(false);
+
+  if (accessState === "unavailable") {
     return null;
+  }
+
+  const handleRequestAccess = async () => {
+    setAccessRequestPending(true);
+    try {
+      await onRequestAccess();
+    } finally {
+      setAccessRequestPending(false);
+    }
+  };
+
+  if (!hasDaemon) {
+    const accessDenied = accessState === "denied";
+    const accessAvailable = accessState === "available";
+    const descriptionText = accessDenied
+      ? "Your browser blocked access to bb on this device. Allow local network access for this site in browser settings, then reload bb."
+      : accessAvailable
+        ? "bb couldn’t connect to its local editor helper. Make sure the bb desktop app or CLI is running on this device, then retry. If it is already running, a remote browser origin may need to be configured."
+        : "Connect this browser to bb on this device so it can discover installed editors. bb only contacts the local helper after you choose Enable; your browser may ask for local network access.";
+    const buttonLabel = accessRequestPending
+      ? accessAvailable
+        ? "Retrying…"
+        : "Enabling…"
+      : accessDenied
+        ? "Blocked"
+        : accessAvailable
+          ? "Retry"
+          : "Enable";
+
+    return (
+      <SettingsSection title="File Preferences">
+        <SettingsWithControl
+          label="Local editor integration"
+          description={
+            <>
+              {descriptionText}{" "}
+              <a
+                href={LOCAL_EDITOR_INTEGRATION_DOCS_URL}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-0.5 rounded-sm underline underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                onClick={(event) => {
+                  event.preventDefault();
+                  openUrlInExternalBrowser(LOCAL_EDITOR_INTEGRATION_DOCS_URL);
+                }}
+              >
+                Setup guide
+                <Icon
+                  name="ExternalLink"
+                  className="size-3 shrink-0"
+                  aria-hidden
+                />
+              </a>
+            </>
+          }
+        >
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={accessRequestPending || accessDenied}
+            onClick={handleRequestAccess}
+          >
+            {buttonLabel}
+          </Button>
+        </SettingsWithControl>
+      </SettingsSection>
+    );
   }
 
   return (
@@ -487,7 +557,6 @@ const NAVIGATE_TO_THREAD_AFTER_CREATE_SETTING_LABEL =
 const RICH_TEXT_EDITING_SETTING_LABEL = "Markdown formatting in prompt box";
 const UNHANDLED_PROVIDER_EVENTS_SETTING_LABEL =
   "Show unhandled provider events";
-const CAFFEINATE_SETTING_LABEL = "Caffeinate";
 const STEER_ACTIVE_THREAD_ON_ENTER_SETTING_LABEL =
   "Steer running threads on Enter";
 
@@ -501,26 +570,6 @@ export function RootComposeBehaviorSettingsControl({
         checked={navigateToThreadAfterCreate}
         onCheckedChange={onNavigateToThreadAfterCreateChange}
         aria-label={NAVIGATE_TO_THREAD_AFTER_CREATE_SETTING_LABEL}
-      />
-    </SettingsWithControl>
-  );
-}
-
-export function CaffeinateSettingsControl({
-  disabled,
-  enabled,
-  onEnabledChange,
-}: CaffeinateSettingsControlProps) {
-  return (
-    <SettingsWithControl
-      label={CAFFEINATE_SETTING_LABEL}
-      description="Prevent system idle sleep while bb is running. Closing the lid or choosing Sleep still sleeps the Mac."
-    >
-      <Switch
-        checked={enabled}
-        disabled={disabled}
-        onCheckedChange={onEnabledChange}
-        aria-label={CAFFEINATE_SETTING_LABEL}
       />
     </SettingsWithControl>
   );
@@ -764,18 +813,15 @@ export function AppearanceSettingsSection({
           faviconColor={faviconColor}
           onFaviconColorChange={onFaviconColorChange}
         />
+        <SplitDimmingSetting />
       </div>
     </SettingsSection>
   );
 }
 
 export function GeneralSettingsSection({
-  caffeinateAvailable,
-  caffeinateDisabled,
-  caffeinateEnabled,
   desktopBrowserAvailable,
   navigateToThreadAfterCreate,
-  onCaffeinateChange,
   onNavigateToThreadAfterCreateChange,
   onOpenLinksInAppBrowserChange,
   onRewriteLocalhostLinksChange,
@@ -809,14 +855,6 @@ export function GeneralSettingsSection({
           enabled={steerActiveThreadOnEnter}
           onEnabledChange={onSteerActiveThreadOnEnterChange}
         />
-
-        {caffeinateAvailable ? (
-          <CaffeinateSettingsControl
-            disabled={caffeinateDisabled}
-            enabled={caffeinateEnabled}
-            onEnabledChange={onCaffeinateChange}
-          />
-        ) : null}
 
         {desktopBrowserAvailable ? (
           <InAppBrowserLinkSettingsControl
@@ -953,16 +991,20 @@ export function ProviderSettingsSection({
 }
 
 const CLAUDE_CODE_MOCK_CLI_TRAFFIC_EXPERIMENT_LABEL = "Mock CLI Traffic";
+const EDIT_MESSAGES_EXPERIMENT_LABEL = "Edit messages";
 const NEW_ONBOARDING_EXPERIMENT_LABEL = "New onboarding";
-const EXTENSIONS_EXPERIMENT_LABEL = "Extensions";
+const PROVIDER_SESSION_REAPING_EXPERIMENT_LABEL =
+  "Idle provider session release";
 export function ExperimentsSettingsSection({
   claudeCodeMockCliTrafficEnabled,
   disabled,
+  editMessagesEnabled,
   newOnboardingEnabled,
+  providerSessionReapingEnabled,
   onClaudeCodeMockCliTrafficEnabledChange,
+  onEditMessagesEnabledChange,
   onNewOnboardingEnabledChange,
-  onToolsHubEnabledChange,
-  toolsHubEnabled,
+  onProviderSessionReapingEnabledChange,
 }: ExperimentsSettingsSectionProps) {
   return (
     <SettingsSection
@@ -984,6 +1026,18 @@ export function ExperimentsSettingsSection({
         </SettingsWithControl>
 
         <SettingsWithControl
+          label={EDIT_MESSAGES_EXPERIMENT_LABEL}
+          description="Edit a sent message and replace the conversation from that point. Workspace changes are kept."
+        >
+          <Switch
+            checked={editMessagesEnabled}
+            disabled={disabled}
+            onCheckedChange={onEditMessagesEnabledChange}
+            aria-label={EDIT_MESSAGES_EXPERIMENT_LABEL}
+          />
+        </SettingsWithControl>
+
+        <SettingsWithControl
           label={NEW_ONBOARDING_EXPERIMENT_LABEL}
           description="Enable the new first-run guide for agent setup and project selection."
         >
@@ -996,14 +1050,14 @@ export function ExperimentsSettingsSection({
         </SettingsWithControl>
 
         <SettingsWithControl
-          label={EXTENSIONS_EXPERIMENT_LABEL}
-          description="Enable Extensions for managing skills and plugins. Automations stay in the Plugins section beside threads, and installed skills and plugin runtimes keep working while it is off."
+          label={PROVIDER_SESSION_REAPING_EXPERIMENT_LABEL}
+          description="Release restorable provider sessions after 30 idle minutes. A change can take up to five minutes."
         >
           <Switch
-            checked={toolsHubEnabled}
+            checked={providerSessionReapingEnabled}
             disabled={disabled}
-            onCheckedChange={onToolsHubEnabledChange}
-            aria-label={EXTENSIONS_EXPERIMENT_LABEL}
+            onCheckedChange={onProviderSessionReapingEnabledChange}
+            aria-label={PROVIDER_SESSION_REAPING_EXPERIMENT_LABEL}
           />
         </SettingsWithControl>
       </div>
@@ -1016,12 +1070,14 @@ export function SettingsView() {
   const themePreference = useThemePreference();
   const systemConfigQuery = useSystemConfig();
   const { hasDaemon } = useHostDaemon();
+  const { accessState, requestAccess } = useLocalHostDaemonAccess();
   const { workspaceOpenTargets } = useWorkspaceOpenTargets({
     enabled: hasDaemon,
   });
   const [directoryTargetId, setDirectoryTargetId] =
-    useWorkspaceOpenTargetPreference();
-  const [fileTargetId, setFileTargetId] = useFileOpenTargetPreference();
+    useWorkspaceOpenTargetPreference(workspaceOpenTargets);
+  const [fileTargetId, setFileTargetId] =
+    useFileOpenTargetPreference(workspaceOpenTargets);
   const [openLinksInAppBrowser, setOpenLinksInAppBrowser] =
     useOpenLinksInAppBrowserPreference();
   const [rewriteLocalhostLinks, setRewriteLocalhostLinks] =
@@ -1047,7 +1103,7 @@ export function SettingsView() {
 
   let content: ReactNode = null;
   if (activePluginId !== null) {
-    content = <PluginSettingsDetailSection pluginId={activePluginId} />;
+    content = <PluginSettingsPage pluginId={activePluginId} />;
   } else if (activeProviderId !== null) {
     const isCodex = activeProviderId === "codex";
     content = (
@@ -1135,11 +1191,13 @@ export function SettingsView() {
     content = (
       <>
         <LocalOpenTargetSettingsSection
+          accessState={accessState}
           directoryTargetId={directoryTargetId}
           fileTargetId={fileTargetId}
           hasDaemon={hasDaemon}
           onDirectoryTargetChange={setDirectoryTargetId}
           onFileTargetChange={setFileTargetId}
+          onRequestAccess={requestAccess}
           targets={workspaceOpenTargets}
         />
         <FileOpenersSettingsSection />
@@ -1163,6 +1221,13 @@ export function SettingsView() {
             claudeCodeMockCliTraffic: enabled,
           })
         }
+        editMessagesEnabled={experiments.editMessages}
+        onEditMessagesEnabledChange={(enabled) =>
+          updateExperimentsMutation.mutate({
+            ...experiments,
+            editMessages: enabled,
+          })
+        }
         newOnboardingEnabled={experiments.newOnboarding}
         onNewOnboardingEnabledChange={(enabled) =>
           updateExperimentsMutation.mutate({
@@ -1170,17 +1235,17 @@ export function SettingsView() {
             newOnboarding: enabled,
           })
         }
-        onToolsHubEnabledChange={(enabled) =>
+        providerSessionReapingEnabled={experiments.providerSessionReaping}
+        onProviderSessionReapingEnabledChange={(enabled) =>
           updateExperimentsMutation.mutate({
             ...experiments,
-            toolsHub: enabled,
+            providerSessionReaping: enabled,
           })
         }
-        toolsHubEnabled={experiments.toolsHub}
       />
     );
-  } else if (activeSection === "plugins") {
-    content = <PluginsSettingsSection />;
+  } else if (activeSection === "marketplaces") {
+    content = <MarketplacesSettingsSection />;
   } else if (activeSection === "community") {
     content = <CommunitySettingsSection />;
   } else if (activeSection === "archived") {
@@ -1189,14 +1254,6 @@ export function SettingsView() {
     content = (
       <>
         <GeneralSettingsSection
-          caffeinateAvailable={
-            systemConfigQuery.data?.primaryHostPlatform === "darwin"
-          }
-          caffeinateDisabled={
-            systemConfigQuery.data === undefined ||
-            updateGeneralSettingsMutation.isPending
-          }
-          caffeinateEnabled={generalSettings.caffeinate}
           desktopBrowserAvailable={desktopBrowserAvailable}
           navigateToThreadAfterCreate={navigateToThreadAfterCreate}
           openLinksInAppBrowser={openLinksInAppBrowser}
@@ -1207,12 +1264,6 @@ export function SettingsView() {
           steerActiveThreadOnEnterDisabled={
             systemConfigQuery.data === undefined ||
             updateGeneralSettingsMutation.isPending
-          }
-          onCaffeinateChange={(enabled) =>
-            updateGeneralSettingsMutation.mutate({
-              ...generalSettings,
-              caffeinate: enabled,
-            })
           }
           onNavigateToThreadAfterCreateChange={setNavigateToThreadAfterCreate}
           onOpenLinksInAppBrowserChange={setOpenLinksInAppBrowser}

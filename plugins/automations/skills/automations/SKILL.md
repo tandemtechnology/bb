@@ -20,6 +20,22 @@ Use `script` when the output is fully determined by code: watchdogs, threshold a
 
 Design the script to print nothing when there is nothing to report: an exit-0 run with empty stdout/stderr, or a last non-empty line of `{"wakeAgent": false}`, is recorded as a skipped silent tick. Any other output is captured; non-zero exit or timeout is recorded as a failed run.
 
+Execution safety is fail-closed:
+
+- An automation has at most one running execution. A duplicate scheduled tick or
+  manual run reuses the existing run instead of starting another process tree.
+- Failed recurring runs retry after exponential delays (30 seconds, then 60
+  seconds). The third consecutive failure pauses the automation and clears its
+  next run. A successful or skipped run resets the failure count; explicitly
+  resuming an automation also resets it.
+- Script timeout and output-limit termination applies to the whole spawned
+  process group, including descendant processes (on Windows, to the direct
+  child).
+- A run interrupted by a server restart or plugin reload is settled on
+  startup: script runs and agent runs that never got a thread are recorded as
+  skipped, and agent runs follow their thread's state. Nothing stays "running"
+  without a process behind it.
+
 Use `agent` when the run needs reasoning: summarize a feed, pick interesting items, draft a human-friendly message, or branch on content.
 
 Creating:
@@ -71,9 +87,12 @@ BB_SERVER_URL          The bb server API base URL
 BB_PROJECT_ID          The automation's project
 BB_AUTOMATION_ID       The automation id
 BB_AUTOMATION_RUN_ID   This run id
+BB_CLI                 Absolute path to the bb CLI, when it could be resolved
 ```
 
-`BB_ENVIRONMENT_ID` and `BB_HOST_DAEMON_PORT` are intentionally not injected by the plugin. The plugin resolves `bb` and prepends its directory to `PATH` so scripts can call the CLI.
+`BB_ENVIRONMENT_ID` and `BB_HOST_DAEMON_PORT` are intentionally not injected by the plugin. The plugin resolves `bb` and prepends its directory to `PATH` so scripts can call the CLI. It looks at `BB_CLI`, then `BB_CLI_DIR`, then `PATH`, then the common macOS install paths.
+
+If `bb` cannot be found, the script still runs. The run output starts with a `[bb] warning:` line, and a script that calls `bb` fails on that line rather than before its first line.
 
 Managing:
 

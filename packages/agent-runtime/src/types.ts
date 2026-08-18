@@ -1,4 +1,5 @@
 import type {
+  PermissionMode,
   AvailableModel,
   ClientTurnRequestId,
   DynamicTool,
@@ -7,6 +8,7 @@ import type {
   PendingInteractionCreate,
   PendingInteractionResolution,
   PromptInput,
+  ProviderFork,
   RuntimeThreadExecutionOptions,
   ThreadEvent,
   ToolCallRequest,
@@ -56,11 +58,13 @@ export type AgentRuntimeSkillRoot =
 
 /**
  * Final per-thread state snapshot taken when a provider process exits,
- * captured before the runtime clears the thread's state. This is the only
- * way consumers can see which turn a crashed thread was running.
+ * captured before the runtime clears the thread's state. This is the only way
+ * consumers can distinguish an idle session from a crashed active turn or a
+ * turn request awaiting its first provider lifecycle event.
  */
 export interface AgentRuntimeProcessExitThreadState {
   activeTurnId: string | null;
+  pendingTurnStart: boolean;
   providerThreadId: string | null;
   threadId: string;
 }
@@ -96,6 +100,11 @@ export interface AgentRuntimeOptions {
 
   /** Optional directory containing bundled provider bridges. */
   bridgeBundleDir?: string;
+  /**
+   * Bounds for the turn-start watchdog (visible system/error when an
+   * accepted turn never starts). Defaults: 120s threshold, 15s sweep.
+   */
+  turnStartWatchdog?: { thresholdMs?: number; intervalMs?: number };
 
   /** Optional executable used to run Node-based provider bridges. */
   bridgeNodeExecutablePath?: string;
@@ -131,8 +140,42 @@ export interface AgentRuntimeOptions {
 // Runtime interface
 // ---------------------------------------------------------------------------
 
+/**
+ * A plugin-delivered provider bridge, resolved by the host daemon: the bridge
+ * artifact has been downloaded, hash-verified, and cached at `artifactPath`.
+ * Rides per-call like the ACP launch spec; `sha256` keys process identity so
+ * a plugin update (new artifact hash) gets a fresh bridge process.
+ */
+export interface AgentRuntimeBridgeLaunch {
+  /** The plugin that ships this bridge. Scopes the process's directories. */
+  pluginId: string;
+  /**
+   * This plugin's persistent bridge directory on this host, already created by
+   * the daemon. The bootstrap hands it to the bridge; the matching temp dir is
+   * this process's own and is created and removed by the bootstrap.
+   */
+  dataDir: string;
+  /**
+   * Which bridge binary to run, as the server decided it: a hash-verified
+   * plugin artifact already cached on this host, or a bridge inside the
+   * daemon's own bundle (Pi).
+   */
+  source:
+    | { kind: "artifact"; digest: string; artifactPath: string }
+    | { kind: "daemon-bundled"; id: string };
+  /** Server-validated capabilities from the provider declaration. */
+  capabilities: {
+    supportsServiceTier: boolean;
+    permissionModes: PermissionMode[];
+    supportsThreadArchive: boolean;
+    supportsThreadRename: boolean;
+    fork: ProviderFork;
+  };
+}
+
 export interface EnsureProviderArgs {
   acpLaunchSpec?: HostDaemonAcpLaunchSpec;
+  bridgeLaunch?: AgentRuntimeBridgeLaunch;
   /**
    * Providers with thread-scoped processes use this to start the process for a
    * specific bb thread. Omit it for provider-scoped maintenance work such as
@@ -144,6 +187,7 @@ export interface EnsureProviderArgs {
 
 export interface StartThreadArgs {
   acpLaunchSpec?: HostDaemonAcpLaunchSpec;
+  bridgeLaunch?: AgentRuntimeBridgeLaunch;
   environmentId: string;
   threadId: string;
   projectId: string;
@@ -178,8 +222,34 @@ export interface StartThreadResult {
   providerThreadId: string;
 }
 
+export interface PrepareThreadRewindArgs {
+  acpLaunchSpec?: HostDaemonAcpLaunchSpec;
+  bridgeLaunch?: AgentRuntimeBridgeLaunch;
+  environmentId: string;
+  threadId: string;
+  leaseId: string;
+  projectId: string;
+  providerId: string;
+  sourceProviderThreadId: string;
+  retainThroughProviderCheckpoint: string;
+  options: AgentRuntimeExecutionOptions;
+  instructions?: string;
+  dynamicTools?: DynamicTool[];
+  disallowedTools?: readonly string[];
+  instructionMode?: InstructionMode;
+}
+
+export interface PrepareThreadRewindResult {
+  providerThreadId: string;
+}
+
+export interface DiscardThreadRewindArgs {
+  leaseId: string;
+}
+
 export interface ResumeThreadArgs {
   acpLaunchSpec?: HostDaemonAcpLaunchSpec;
+  bridgeLaunch?: AgentRuntimeBridgeLaunch;
   environmentId: string;
   threadId: string;
   projectId?: string;
@@ -232,6 +302,10 @@ export interface StopThreadArgs {
   threadId: string;
 }
 
+export interface StopThreadResult {
+  providerCheckpointId: string | null;
+}
+
 export interface AgentRuntimeProviderSession {
   providerId: string;
   providerThreadId: string;
@@ -244,6 +318,11 @@ export interface WaitForActiveTurnArgs {
 export interface ReapIdleProviderSessionsArgs {
   idleForMs: number;
   nowMs: number;
+  providerSessionReapingEnabled: boolean;
+  runThreadExclusive?: (
+    threadId: string,
+    work: () => Promise<ReapedIdleProviderSession | null>,
+  ) => Promise<ReapedIdleProviderSession | null>;
 }
 
 export interface ReapedIdleProviderSession {
@@ -267,12 +346,14 @@ export interface ClearThreadGoalArgs {
 }
 
 export interface ArchiveThreadArgs {
+  bridgeLaunch?: AgentRuntimeBridgeLaunch;
   providerId: string;
   providerThreadId: string;
   threadId: string;
 }
 
 export interface UnarchiveThreadArgs {
+  bridgeLaunch?: AgentRuntimeBridgeLaunch;
   providerId: string;
   providerThreadId: string;
   threadId: string;
@@ -281,6 +362,7 @@ export interface UnarchiveThreadArgs {
 export interface ListModelsArgs {
   providerId: string;
   acpLaunchSpec?: HostDaemonAcpLaunchSpec;
+  bridgeLaunch?: AgentRuntimeBridgeLaunch;
   cwd?: string;
 }
 
@@ -288,6 +370,12 @@ export interface AgentRuntime {
   ensureProvider(args: EnsureProviderArgs): Promise<void>;
 
   startThread(args: StartThreadArgs): Promise<StartThreadResult>;
+
+  prepareThreadRewind(
+    args: PrepareThreadRewindArgs,
+  ): Promise<PrepareThreadRewindResult>;
+
+  discardThreadRewind(args: DiscardThreadRewindArgs): Promise<void>;
 
   resumeThread(args: ResumeThreadArgs): Promise<ResumeThreadResult>;
 
@@ -301,7 +389,7 @@ export interface AgentRuntime {
    * reports `false` afterwards and the next turn must go through
    * `resumeThread`. The provider process keeps running for other threads.
    */
-  stopThread(args: StopThreadArgs): Promise<void>;
+  stopThread(args: StopThreadArgs): Promise<StopThreadResult>;
 
   clearThreadGoal(args: ClearThreadGoalArgs): Promise<{ cleared: boolean }>;
 
