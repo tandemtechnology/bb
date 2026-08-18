@@ -2,6 +2,7 @@ import {
   createPromptHistoryEntry,
   listQueuedThreadMessages,
   listStoredProjectPromptHistoryRows,
+  listStoredThreadPromptContextRows,
   listStoredThreadPromptHistoryRows,
   type DbQueryConnection,
   type QueuedThreadMessageRow,
@@ -244,6 +245,30 @@ export function listThreadPromptHistory(
     acceptedEntries,
     args.limit,
   );
+}
+
+export function listAcceptedThreadPromptHistory(
+  deps: PromptHistoryServiceDeps,
+  args: ThreadPromptHistoryArgs,
+): PromptHistoryEntry[] {
+  const acceptedEntries = buildPromptHistoryEntries({
+    rows: listStoredThreadPromptContextRows(deps.db, {
+      threadId: args.threadId,
+      limit: args.limit,
+    }),
+    logger: deps.logger,
+    buildEntry: buildAcceptedPromptHistoryEntry,
+    describeRow: (row) => ({
+      entryId: row.id,
+      requestSequence: row.requestSequence,
+      threadId: row.threadId,
+    }),
+  });
+
+  return takeVisiblePromptHistoryEntries({
+    entries: acceptedEntries,
+    limit: args.limit,
+  }).map(toPromptHistoryEntry);
 }
 
 export function recordAcceptedPromptHistoryEntry(

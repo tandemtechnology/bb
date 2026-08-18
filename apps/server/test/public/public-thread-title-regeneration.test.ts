@@ -1,4 +1,4 @@
-import { getThread } from "@bb/db";
+import { createPromptHistoryEntry, getThread } from "@bb/db";
 import { threadSchema } from "@bb/domain";
 import { apiErrorSchema } from "@bb/server-contract";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -56,6 +56,32 @@ describe("public thread title regeneration", () => {
         title: "Bad title",
         titleFallback: "Please improve the confusing sidebar thread title",
       });
+      createPromptHistoryEntry(harness.deps.db, {
+        projectId: project.id,
+        threadId: thread.id,
+        scope: "project",
+        requestSequence: 1,
+        input: [
+          {
+            type: "text",
+            text: `${"Detailed initial context ".repeat(8)}initial-context-tail`,
+            mentions: [],
+          },
+        ],
+      });
+      createPromptHistoryEntry(harness.deps.db, {
+        projectId: project.id,
+        threadId: thread.id,
+        scope: "thread",
+        requestSequence: 2,
+        input: [
+          {
+            type: "text",
+            text: "Recent follow-up requires AntBar title controls",
+            mentions: [],
+          },
+        ],
+      });
 
       const response = await harness.app.request(
         `/api/v1/threads/${thread.id}/regenerate-title`,
@@ -69,6 +95,41 @@ describe("public thread title regeneration", () => {
         "A much clearer thread title",
       );
       expect(piAiMocks.complete).toHaveBeenCalledTimes(1);
+      expect(piAiMocks.complete).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          messages: [
+            expect.objectContaining({
+              content: expect.stringContaining("initial-context-tail"),
+            }),
+          ],
+        }),
+        undefined,
+      );
+      expect(piAiMocks.complete).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          messages: [
+            expect.objectContaining({
+              content: expect.stringContaining(
+                "Recent follow-up requires AntBar title controls",
+              ),
+            }),
+          ],
+        }),
+        undefined,
+      );
+      expect(piAiMocks.complete).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          messages: [
+            expect.objectContaining({
+              content: expect.stringContaining("Bad title"),
+            }),
+          ],
+        }),
+        undefined,
+      );
     });
   });
 

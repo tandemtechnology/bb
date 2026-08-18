@@ -56,6 +56,9 @@ import { generateThreadMetadataWithOutcome } from "../../services/threads/title-
 import { handleThreadOwnershipChange } from "../../services/threads/thread-ownership.js";
 import { applyThreadExecutionOverride } from "../../services/threads/thread-execution-override.js";
 import { emitPluginThreadDeleted } from "../../services/plugins/plugin-thread-events.js";
+import { listAcceptedThreadPromptHistory } from "../../services/prompt-history.js";
+
+const TITLE_REGENERATION_HISTORY_LIMIT = 8;
 
 function parseThreadIncludes(query: ThreadGetQuery): Set<ThreadIncludeOption> {
   const includes = new Set<ThreadIncludeOption>();
@@ -427,8 +430,18 @@ export function registerThreadBaseRoutes(app: Hono, deps: AppDeps): void {
 
   post(routes.regenerateTitle, async (context) => {
     const thread = requirePublicThread(deps.db, context.req.param("id"));
-    const source = thread.titleFallback?.trim();
-    if (!source) {
+    const fallback = thread.titleFallback?.trim();
+    const acceptedHistory = listAcceptedThreadPromptHistory(deps, {
+      threadId: thread.id,
+      limit: TITLE_REGENERATION_HISTORY_LIMIT,
+    });
+    const input = [
+      ...(fallback
+        ? [{ type: "text" as const, text: fallback, mentions: [] }]
+        : []),
+      ...[...acceptedHistory].reverse().flatMap((entry) => entry.input),
+    ];
+    if (input.length === 0) {
       throw new ApiError(
         409,
         "thread_title_source_unavailable",
@@ -437,8 +450,9 @@ export function registerThreadBaseRoutes(app: Hono, deps: AppDeps): void {
     }
 
     const outcome = await generateThreadMetadataWithOutcome(deps, {
-      input: [{ type: "text", text: source, mentions: [] }],
+      input,
       threadId: thread.id,
+      titleToReplace: thread.title ?? fallback ?? null,
     });
     const title = outcome.metadata?.title;
     if (!title) {

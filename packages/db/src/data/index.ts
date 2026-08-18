@@ -45,11 +45,13 @@ export type {
 export {
   createPromptHistoryEntry,
   listStoredProjectPromptHistoryRows,
+  listStoredThreadPromptContextRows,
   listStoredThreadPromptHistoryRows,
 } from "./prompt-history.js";
 export type {
   CreatePromptHistoryEntryInput,
   ListStoredProjectPromptHistoryArgs,
+  ListStoredThreadPromptContextArgs,
   ListStoredThreadPromptHistoryArgs,
   StoredPromptHistoryEntryRow,
 } from "./prompt-history.js";

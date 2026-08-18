@@ -154,15 +154,16 @@ export const templateDefinitions = [
   },
   {
     "id": "generateThreadMetadata",
-    "body": "You create concise titles for coding tasks.\nCall the `result` tool with:\n- title: short, clear, 4-5 words maximum, sentence case\n\nConsider the user's intent when titling to make it useful. For instance, if they detail specific tools to use to solve a problem, it is the problem that should be the title, not the tools that should be used.\n\nTask:\n{{cleanedPrompt}}",
+    "body": "You create concise titles for coding tasks.\nCall the `result` tool with:\n- title: short, clear, 4-5 words maximum, sentence case\n\nConsider the user's intent when titling to make it useful. For instance, if they detail specific tools to use to solve a problem, it is the problem that should be the title, not the tools that should be used.\nWhen the conversation contains follow-up requests, title its current overall objective and prioritize the later context.\nIf there is a current title to replace, produce a meaningfully better title and do not repeat it verbatim.\n\nConversation context (earliest to latest):\n{{conversationContext}}\n\nCurrent title to replace:\n{{titleToReplace}}",
     "fileName": "generate-thread-metadata.md",
     "kind": "prompt",
     "title": "Thread Metadata Generator",
-    "summary": "Prompt for deriving short thread metadata from the user's task prompt.",
+    "summary": "Prompt for deriving short thread metadata from the user's conversation context.",
     "intent": "Generate stable, operator-friendly metadata for threads without adding explanatory prose.",
     "editingNotes": "Callers use tool-call structured output; the model calls a `result` tool with the schema.",
     "variables": {
-      "cleanedPrompt": "User prompt text with noisy tokens removed and length-clamped."
+      "conversationContext": "User requests in chronological order, cleaned and bounded for inference.",
+      "titleToReplace": "Current visible title to improve, or an explicit marker for a new thread."
     }
   },
   {
@@ -296,7 +297,8 @@ export interface TemplateVariables {
     patch: string;
   };
   generateThreadMetadata: {
-    cleanedPrompt: string;
+    conversationContext: string;
+    titleToReplace: string;
   };
   standardAgentAppendInstructions: Record<string, never>;
   systemMessageChildThreadNeedsAttention: {

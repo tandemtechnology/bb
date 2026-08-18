@@ -3,6 +3,7 @@ import type { PromptInput } from "@bb/domain";
 import {
   deriveBranchSlugFromTitle,
   deriveTitleFallback,
+  deriveTitleGenerationContext,
   sanitizeGeneratedTitle,
   shouldGenerateThreadTitle,
 } from "../../src/services/threads/title-generation.js";
@@ -57,9 +58,7 @@ describe("thread title generation", () => {
   });
 
   it("derives branch slugs from the chosen title text", () => {
-    expect(deriveBranchSlugFromTitle("Fix Login Flow")).toBe(
-      "fix-login-flow",
-    );
+    expect(deriveBranchSlugFromTitle("Fix Login Flow")).toBe("fix-login-flow");
   });
 
   it("keeps fallback derivation independent from title generation eligibility", () => {
@@ -67,5 +66,13 @@ describe("thread title generation", () => {
 
     expect(deriveTitleFallback(input)).toBe("fix bug");
     expect(shouldGenerateThreadTitle(input)).toBe(false);
+  });
+
+  it("uses substantially more context for inference than for the display fallback", () => {
+    const uniqueTail = "prioritize-the-new-sidebar-behavior";
+    const input = [textInput(`${"context ".repeat(20)}${uniqueTail}`)];
+
+    expect(deriveTitleFallback(input)).not.toContain(uniqueTail);
+    expect(deriveTitleGenerationContext(input)).toContain(uniqueTail);
   });
 });

@@ -39,6 +39,11 @@ export interface ListStoredThreadPromptHistoryArgs
   threadId: string;
 }
 
+export interface ListStoredThreadPromptContextArgs
+  extends ListStoredPromptHistoryArgs {
+  threadId: string;
+}
+
 function rawPromptHistoryRowLimit(limit: number): number {
   // Fetch one extra visible window to absorb consecutive duplicate collapse
   // without falling back to OFFSET paging.
@@ -123,6 +128,29 @@ export function listStoredThreadPromptHistoryRows(
         eq(promptHistoryEntries.scope, "thread"),
       ),
     )
+    .orderBy(
+      desc(promptHistoryEntries.createdAt),
+      desc(promptHistoryEntries.requestSequence),
+      desc(promptHistoryEntries.id),
+    )
+    .limit(rawPromptHistoryRowLimit(args.limit))
+    .all();
+}
+
+export function listStoredThreadPromptContextRows(
+  db: DbQueryConnection,
+  args: ListStoredThreadPromptContextArgs,
+): StoredPromptHistoryEntryRow[] {
+  return db
+    .select({
+      createdAt: promptHistoryEntries.createdAt,
+      id: promptHistoryEntries.id,
+      input: promptHistoryEntries.input,
+      requestSequence: promptHistoryEntries.requestSequence,
+      threadId: promptHistoryEntries.threadId,
+    })
+    .from(promptHistoryEntries)
+    .where(eq(promptHistoryEntries.threadId, args.threadId))
     .orderBy(
       desc(promptHistoryEntries.createdAt),
       desc(promptHistoryEntries.requestSequence),
