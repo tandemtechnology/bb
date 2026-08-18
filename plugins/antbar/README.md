@@ -8,6 +8,9 @@ A thread appears in Inbox when it is unread or BB reports
 `hasPendingInteraction`. Inbox entries are lightweight shortcuts that open the
 session. Every session remains in its normal project and group, where its full
 row and controls live.
+Use a grouped thread row's actions menu to set its title manually or regenerate
+it from the thread's initial prompt.
+
 
 ## Install and select
 

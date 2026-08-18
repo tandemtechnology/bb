@@ -583,8 +583,11 @@ reimplementing it, and `indicatorLabel` carries the matching accessible string.
 6. **Action surface.** Destructive and dialog-bearing actions route through
    `useThreadActions()`, so `archive` closes panes and repairs the route, and
    `requestDelete` opens bb's confirmation rather than deleting silently.
-   Confirm that split (silent `rename`, host-confirmed delete) is the right
-   line, and decide whether bulk actions and undo belong here.
+   `rename` stays silent for plugin-owned editing, while
+   `experimental_regenerateTitle` asks the server to rerun bb's title
+   inference from the initial prompt. Confirm that split (plugin-owned rename,
+   server-owned generation, host-confirmed delete) is the right line, and
+   decide whether bulk actions and undo belong here.
 7. **Permission.** Decide whether `archive` and `requestDelete` need any plugin
    permission gate beyond installation trust.
 8. **`experimental_useSidebarThreadPullRequest`.** Per-row and opt-in, because

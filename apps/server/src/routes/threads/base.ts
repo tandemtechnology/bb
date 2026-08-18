@@ -52,6 +52,7 @@ import {
   toThreadResponseFromThread,
 } from "../../services/threads/thread-runtime-display.js";
 import { assertValidParentThread } from "../../services/threads/thread-parent.js";
+import { generateThreadMetadataWithOutcome } from "../../services/threads/title-generation.js";
 import { handleThreadOwnershipChange } from "../../services/threads/thread-ownership.js";
 import { applyThreadExecutionOverride } from "../../services/threads/thread-execution-override.js";
 import { emitPluginThreadDeleted } from "../../services/plugins/plugin-thread-events.js";
@@ -203,6 +204,25 @@ function buildThreadSearchResponse(
     active: buildThreadSearchGroupResponse(deps, { group: args.active }),
     archived: buildThreadSearchGroupResponse(deps, { group: args.archived }),
   };
+}
+
+function dispatchThreadTitleRenameIfReady(
+  deps: AppDeps,
+  thread: Thread,
+  title: string,
+): void {
+  if (!thread.environmentId) return;
+  const environment = requireEnvironment(deps.db, thread.environmentId);
+  if (environment.status !== "ready" || !environment.path) return;
+  dispatchThreadRenameCommand(deps, {
+    environment: {
+      id: environment.id,
+      hostId: environment.hostId,
+    },
+    providerId: thread.providerId,
+    threadId: thread.id,
+    title,
+  });
 }
 
 export function registerThreadBaseRoutes(app: Hono, deps: AppDeps): void {
@@ -387,23 +407,8 @@ export function registerThreadBaseRoutes(app: Hono, deps: AppDeps): void {
       throw new ApiError(404, "thread_not_found", "Thread not found");
     }
 
-    if (
-      payload.title &&
-      payload.title !== thread.title &&
-      updated.environmentId
-    ) {
-      const environment = requireEnvironment(deps.db, updated.environmentId);
-      if (environment.status === "ready" && environment.path) {
-        dispatchThreadRenameCommand(deps, {
-          environment: {
-            id: environment.id,
-            hostId: environment.hostId,
-          },
-          providerId: updated.providerId,
-          threadId: updated.id,
-          title: payload.title,
-        });
-      }
+    if (payload.title && payload.title !== thread.title) {
+      dispatchThreadTitleRenameIfReady(deps, updated, payload.title);
     }
 
     if (
@@ -417,6 +422,46 @@ export function registerThreadBaseRoutes(app: Hono, deps: AppDeps): void {
       });
     }
 
+    return context.json(toThreadResponseFromThread(deps, { thread: updated }));
+  });
+
+  post(routes.regenerateTitle, async (context) => {
+    const thread = requirePublicThread(deps.db, context.req.param("id"));
+    const source = thread.titleFallback?.trim();
+    if (!source) {
+      throw new ApiError(
+        409,
+        "thread_title_source_unavailable",
+        "Thread has no prompt text to regenerate a title from",
+      );
+    }
+
+    const outcome = await generateThreadMetadataWithOutcome(deps, {
+      input: [{ type: "text", text: source, mentions: [] }],
+      threadId: thread.id,
+    });
+    const title = outcome.metadata?.title;
+    if (!title) {
+      const sourceUnavailable =
+        outcome.reason === "empty-input" || outcome.reason === "too-short";
+      throw new ApiError(
+        sourceUnavailable ? 409 : 503,
+        sourceUnavailable
+          ? "thread_title_source_unavailable"
+          : "thread_title_generation_failed",
+        sourceUnavailable
+          ? "Thread prompt is too short to regenerate a title"
+          : "Failed to regenerate thread title",
+      );
+    }
+
+    const updated = updateThread(deps.db, deps.hub, thread.id, { title });
+    if (!updated) {
+      throw new ApiError(404, "thread_not_found", "Thread not found");
+    }
+    if (title !== thread.title) {
+      dispatchThreadTitleRenameIfReady(deps, updated, title);
+    }
     return context.json(toThreadResponseFromThread(deps, { thread: updated }));
   });
 

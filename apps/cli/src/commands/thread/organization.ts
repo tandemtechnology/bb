@@ -202,6 +202,24 @@ export function registerOrganizationCommands(
   }
 
   parent
+    .command("regenerate-title [id]")
+    .description("Regenerate a thread title from its initial prompt")
+    .option("--self", "Target the current thread (from BB_THREAD_ID)")
+    .option("--json", "Print machine-readable JSON output")
+    .action(
+      action(async (id: string | undefined, opts: SelfOptions) => {
+        const threadId = requireThreadIdOrSelf(id, opts);
+        const result = await createCliBbSdk(
+          getUrl(),
+        ).threads.experimental_regenerateTitle({ threadId });
+        if (outputJson(opts, result)) return;
+        console.log(
+          `Thread ${threadId} title regenerated: ${result.title ?? result.titleFallback ?? threadId}`,
+        );
+      }),
+    );
+
+  parent
     .command("reorder-pinned <id>")
     .description("Move a pinned thread between adjacent pinned threads")
     .option("--after <id>", "Previous pinned thread, or omit for the start")

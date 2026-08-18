@@ -983,6 +983,12 @@ export const publicApiRoutes = {
       ),
       response: jsonResponse<ThreadResponse>(),
     }),
+    regenerateTitle: defineRoute({
+      path: "/threads/:id/regenerate-title",
+      method: "post",
+      request: noRequest<PathId>(),
+      response: jsonResponse<ThreadResponse>(),
+    }),
     delete: defineRoute({
       path: "/threads/:id",
       method: "delete",

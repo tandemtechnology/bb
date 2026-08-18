@@ -105,6 +105,21 @@ export function useUpdateThread(options?: UpdateThreadMutationOptions) {
   });
 }
 
+export function useRegenerateThreadTitle() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    meta: {
+      errorMessage: "Failed to regenerate thread title.",
+    },
+    mutationFn: ({ id }: ThreadMutationRequest) =>
+      sdk.threads.experimental_regenerateTitle({ threadId: id }),
+    onSuccess: (thread) => {
+      applyThreadUpdateResult({ queryClient, thread });
+    },
+  });
+}
+
 export function usePinThread() {
   const queryClient = useQueryClient();
 

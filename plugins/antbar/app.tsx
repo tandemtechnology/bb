@@ -11,7 +11,7 @@
 // Data flows over RPC (see ./server contract) and refreshes live via
 // useRealtime("board:<projectId>"). Style with host theme tokens only.
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { ReactNode } from "react";
+import type { FormEvent, ReactNode } from "react";
 import {
   definePluginApp,
   experimental_useSidebarThreadActions,
@@ -815,10 +815,48 @@ function SidebarRow({
   onDragStart: (threadId: string, projectId: string) => void;
   onDragEnd: () => void;
 }) {
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [titleDraft, setTitleDraft] = useState("");
+  const [renaming, setRenaming] = useState(false);
+  const [regenerating, setRegenerating] = useState(false);
+
   const open = () => {
     actions.open(thread.id);
     onNavigate();
   };
+
+  const beginRename = () => {
+    setTitleDraft(threadTitle(thread));
+    setRenameOpen(true);
+  };
+
+  const submitRename = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const title = titleDraft.trim();
+    if (!title || renaming) return;
+    setRenaming(true);
+    try {
+      await actions.rename(thread.id, title);
+      setRenameOpen(false);
+    } catch {
+      // The host mutation reports the error with its standard toast.
+    } finally {
+      setRenaming(false);
+    }
+  };
+
+  const regenerateTitle = async () => {
+    if (regenerating) return;
+    setRegenerating(true);
+    try {
+      await actions.experimental_regenerateTitle(thread.id);
+    } catch {
+      // The host mutation reports the error with its standard toast.
+    } finally {
+      setRegenerating(false);
+    }
+  };
+
   return (
     <div
       draggable
@@ -887,6 +925,16 @@ function SidebarRow({
             >
               Open in split
             </DropdownMenuItem>
+            <DropdownMenuItem onSelect={beginRename}>Rename…</DropdownMenuItem>
+            <DropdownMenuItem
+              disabled={regenerating}
+              onSelect={() => {
+                void regenerateTitle();
+              }}
+            >
+              {regenerating ? "Regenerating…" : "Regenerate title"}
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
             <DropdownMenuItem
               onSelect={() =>
                 void actions.setPinned(thread.id, !thread.isPinned)
@@ -937,6 +985,51 @@ function SidebarRow({
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+      <Dialog
+        open={renameOpen}
+        onOpenChange={(open) => {
+          if (!renaming) setRenameOpen(open);
+        }}
+      >
+        <DialogContent>
+          <form onSubmit={(event) => void submitRename(event)}>
+            <DialogHeader>
+              <DialogTitle>Rename thread</DialogTitle>
+              <DialogDescription>
+                Set a clear title for this thread.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="py-4">
+              <label
+                htmlFor={`antbar-thread-title-${thread.id}`}
+                className="mb-2 block text-sm font-medium text-foreground"
+              >
+                Title
+              </label>
+              <Input
+                id={`antbar-thread-title-${thread.id}`}
+                autoFocus
+                value={titleDraft}
+                onChange={(event) => setTitleDraft(event.target.value)}
+                disabled={renaming}
+              />
+            </div>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={renaming}
+                onClick={() => setRenameOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={!titleDraft.trim() || renaming}>
+                {renaming ? "Saving…" : "Save"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

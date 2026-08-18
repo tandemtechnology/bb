@@ -125,6 +125,21 @@ describe("bb thread organization commands", () => {
     expect(update).not.toHaveBeenCalled();
   });
 
+  it("regenerates a thread title from its initial prompt", async () => {
+    const regenerate = vi.fn(async () => ({
+      id: "thread-1",
+      title: "Clear generated title",
+    }));
+    stubServerApi({
+      "v1.threads.:id.regenerate-title.$post": regenerate,
+    });
+
+    await runCommand(["thread", "regenerate-title", "thread-1"], register);
+
+    expect(regenerate).toHaveBeenCalledWith({
+      param: { id: "thread-1" },
+    });
+  });
   it("reorders pinned threads with explicit neighbors", async () => {
     const reorder = vi.fn(async () => []);
     stubServerApi({ "v1.threads.:id.pin-order.$patch": reorder });
