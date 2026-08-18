@@ -76,6 +76,35 @@ interface BoardData {
 const groupLabel = (group: Group) =>
   `${group.emoji ? group.emoji + " " : ""}${group.name}`;
 
+const GROUP_EMOJI_OPTIONS = [
+  { value: "📥", label: "Inbox" },
+  { value: "🚧", label: "In progress" },
+  { value: "🔥", label: "Urgent" },
+  { value: "🎯", label: "Goal" },
+  { value: "💡", label: "Idea" },
+  { value: "✅", label: "Done" },
+  { value: "🧭", label: "Planning" },
+  { value: "🛠️", label: "Tools" },
+  { value: "🔍", label: "Research" },
+  { value: "🧪", label: "Experiment" },
+  { value: "📌", label: "Pinned" },
+  { value: "📝", label: "Notes" },
+  { value: "📚", label: "Documentation" },
+  { value: "🗂️", label: "Organize" },
+  { value: "💬", label: "Discussion" },
+  { value: "👀", label: "Review" },
+  { value: "🙋", label: "Needs input" },
+  { value: "🤝", label: "Collaboration" },
+  { value: "🚀", label: "Launch" },
+  { value: "⚡", label: "Fast" },
+  { value: "🐛", label: "Bug" },
+  { value: "🎨", label: "Design" },
+  { value: "📊", label: "Metrics" },
+  { value: "🔒", label: "Security" },
+  { value: "🌱", label: "Growth" },
+  { value: "🏁", label: "Finish" },
+] as const;
+
 // --------------------------------------------------------------------------
 // Board data hook — fetch + realtime refetch (mirrors github/app.tsx useItems)
 // --------------------------------------------------------------------------
@@ -455,13 +484,57 @@ function GroupDialog({
         </DialogHeader>
         <div className="flex flex-col gap-3">
           <div className="flex gap-2">
-            <Input
-              value={emoji}
-              onChange={(e) => setEmoji(e.target.value)}
-              placeholder="🚧"
-              className="w-16 text-center"
-              aria-label="Emoji"
-            />
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-14 shrink-0 text-lg"
+                  aria-label={
+                    emoji
+                      ? `Change group emoji, currently ${emoji}`
+                      : "Choose group emoji"
+                  }
+                >
+                  <span className={emoji ? "" : "opacity-40"} aria-hidden>
+                    {emoji || "🙂"}
+                  </span>
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                align="start"
+                className="w-56 p-2"
+                mobileTitle="Choose group emoji"
+              >
+                <div className="grid grid-cols-6 gap-1">
+                  {GROUP_EMOJI_OPTIONS.map((option) => (
+                    <DropdownMenuItem
+                      key={option.value}
+                      role="menuitemradio"
+                      aria-checked={emoji === option.value}
+                      textValue={option.label}
+                      title={option.label}
+                      className={
+                        "h-8 justify-center px-0 text-base " +
+                        (emoji === option.value ? "bg-state-active" : "")
+                      }
+                      onSelect={() => setEmoji(option.value)}
+                    >
+                      <span aria-hidden>{option.value}</span>
+                      <span className="sr-only">{option.label}</span>
+                    </DropdownMenuItem>
+                  ))}
+                </div>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  disabled={!emoji}
+                  className="justify-center"
+                  onSelect={() => setEmoji("")}
+                >
+                  No emoji
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             <Input
               value={name}
               onChange={(e) => setName(e.target.value)}
