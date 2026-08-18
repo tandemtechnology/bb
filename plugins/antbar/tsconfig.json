@@ -17,6 +17,8 @@
   "include": [
     "server.ts",
     "app.tsx",
+    "emoji.ts",
+    "emoji.test.ts",
     "inbox.ts",
     "inbox.test.ts",
     "migration.ts",

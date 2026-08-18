@@ -12,7 +12,9 @@ row and controls live.
 Use a grouped thread row's actions menu to set its title manually or regenerate
 it from the thread's initial prompt.
 
-Group create/edit dialogs include a picker for choosing or clearing an emoji.
+Group create/edit dialogs include a searchable emoji picker. Search by name,
+alias, or Slack-style shortcode such as `:rocket:`, then press Enter to choose
+the first match or select one from the grid.
 
 ## Install and select
 

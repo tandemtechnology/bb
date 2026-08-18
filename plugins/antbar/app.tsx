@@ -10,7 +10,7 @@
 //
 // Data flows over RPC (see ./server contract) and refreshes live via
 // useRealtime("board:<projectId>"). Style with host theme tokens only.
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import {
   definePluginApp,
@@ -43,6 +43,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { searchGroupEmojis } from "./emoji";
 import { Icon, type IconName } from "@/components/ui/icon";
 import { projectInbox, sortThreads, threadTitle } from "./inbox";
 
@@ -75,35 +76,6 @@ interface BoardData {
 
 const groupLabel = (group: Group) =>
   `${group.emoji ? group.emoji + " " : ""}${group.name}`;
-
-const GROUP_EMOJI_OPTIONS = [
-  { value: "📥", label: "Inbox" },
-  { value: "🚧", label: "In progress" },
-  { value: "🔥", label: "Urgent" },
-  { value: "🎯", label: "Goal" },
-  { value: "💡", label: "Idea" },
-  { value: "✅", label: "Done" },
-  { value: "🧭", label: "Planning" },
-  { value: "🛠️", label: "Tools" },
-  { value: "🔍", label: "Research" },
-  { value: "🧪", label: "Experiment" },
-  { value: "📌", label: "Pinned" },
-  { value: "📝", label: "Notes" },
-  { value: "📚", label: "Documentation" },
-  { value: "🗂️", label: "Organize" },
-  { value: "💬", label: "Discussion" },
-  { value: "👀", label: "Review" },
-  { value: "🙋", label: "Needs input" },
-  { value: "🤝", label: "Collaboration" },
-  { value: "🚀", label: "Launch" },
-  { value: "⚡", label: "Fast" },
-  { value: "🐛", label: "Bug" },
-  { value: "🎨", label: "Design" },
-  { value: "📊", label: "Metrics" },
-  { value: "🔒", label: "Security" },
-  { value: "🌱", label: "Growth" },
-  { value: "🏁", label: "Finish" },
-] as const;
 
 // --------------------------------------------------------------------------
 // Board data hook — fetch + realtime refetch (mirrors github/app.tsx useItems)
@@ -438,8 +410,17 @@ function GroupDialog({
   const [name, setName] = useState("");
   const [emoji, setEmoji] = useState("");
   const [color, setColor] = useState("");
+  const [emojiPickerOpen, setEmojiPickerOpen] = useState(false);
+  const [emojiQuery, setEmojiQuery] = useState("");
+  const emojiSearchRef = useRef<HTMLInputElement>(null);
+  const emojiOptions = useMemo(
+    () => searchGroupEmojis(emojiQuery),
+    [emojiQuery],
+  );
 
   useEffect(() => {
+    setEmojiPickerOpen(false);
+    setEmojiQuery("");
     if (state?.mode === "edit") {
       setName(state.group.name);
       setEmoji(state.group.emoji);
@@ -450,6 +431,20 @@ function GroupDialog({
       setColor("");
     }
   }, [state]);
+
+  useEffect(() => {
+    if (!emojiPickerOpen) return;
+    const frame = window.requestAnimationFrame(() => {
+      emojiSearchRef.current?.focus();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [emojiPickerOpen]);
+
+  const selectEmoji = (value: string) => {
+    setEmoji(value);
+    setEmojiPickerOpen(false);
+    setEmojiQuery("");
+  };
 
   const open = state !== null;
   const submit = () => {
@@ -484,7 +479,13 @@ function GroupDialog({
         </DialogHeader>
         <div className="flex flex-col gap-3">
           <div className="flex gap-2">
-            <DropdownMenu>
+            <DropdownMenu
+              open={emojiPickerOpen}
+              onOpenChange={(next) => {
+                setEmojiPickerOpen(next);
+                if (!next) setEmojiQuery("");
+              }}
+            >
               <DropdownMenuTrigger asChild>
                 <Button
                   type="button"
@@ -503,33 +504,66 @@ function GroupDialog({
               </DropdownMenuTrigger>
               <DropdownMenuContent
                 align="start"
-                className="w-56 p-2"
+                className="w-64 p-2"
                 mobileTitle="Choose group emoji"
               >
-                <div className="grid grid-cols-6 gap-1">
-                  {GROUP_EMOJI_OPTIONS.map((option) => (
-                    <DropdownMenuItem
-                      key={option.value}
-                      role="menuitemradio"
-                      aria-checked={emoji === option.value}
-                      textValue={option.label}
-                      title={option.label}
-                      className={
-                        "h-8 justify-center px-0 text-base " +
-                        (emoji === option.value ? "bg-state-active" : "")
+                <Input
+                  ref={emojiSearchRef}
+                  value={emojiQuery}
+                  onChange={(event) => setEmojiQuery(event.target.value)}
+                  placeholder="Search emoji or :shortcode:"
+                  aria-label="Search emoji"
+                  role="searchbox"
+                  className="mb-2"
+                  onKeyDown={(event) => {
+                    event.stopPropagation();
+                    if (event.key === "Enter") {
+                      const firstMatch = emojiOptions[0];
+                      if (firstMatch) {
+                        event.preventDefault();
+                        selectEmoji(firstMatch.value);
                       }
-                      onSelect={() => setEmoji(option.value)}
-                    >
-                      <span aria-hidden>{option.value}</span>
-                      <span className="sr-only">{option.label}</span>
-                    </DropdownMenuItem>
-                  ))}
-                </div>
+                    } else if (event.key === "Escape") {
+                      event.preventDefault();
+                      setEmojiPickerOpen(false);
+                    }
+                  }}
+                />
+                {emojiOptions.length === 0 ? (
+                  <div
+                    role="status"
+                    className="px-2 py-6 text-center text-sm text-muted-foreground"
+                  >
+                    No emoji found
+                  </div>
+                ) : (
+                  <div className="grid max-h-52 grid-cols-6 gap-1 overflow-y-auto">
+                    {emojiOptions.map((option) => (
+                      <DropdownMenuItem
+                        key={option.value}
+                        role="menuitemradio"
+                        aria-checked={emoji === option.value}
+                        textValue={`${option.label} ${option.shortcode}`}
+                        title={`${option.label} (:${option.shortcode}:)`}
+                        className={
+                          "h-8 justify-center px-0 text-base " +
+                          (emoji === option.value ? "bg-state-active" : "")
+                        }
+                        onSelect={() => selectEmoji(option.value)}
+                      >
+                        <span aria-hidden>{option.value}</span>
+                        <span className="sr-only">
+                          {option.label}, :{option.shortcode}:
+                        </span>
+                      </DropdownMenuItem>
+                    ))}
+                  </div>
+                )}
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
                   disabled={!emoji}
                   className="justify-center"
-                  onSelect={() => setEmoji("")}
+                  onSelect={() => selectEmoji("")}
                 >
                   No emoji
                 </DropdownMenuItem>
