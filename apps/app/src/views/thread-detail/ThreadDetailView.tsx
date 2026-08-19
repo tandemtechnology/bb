@@ -66,6 +66,7 @@ import {
 import {
   didThreadDetailBootstrapRefreshAfterMount,
   getLatestPendingInteraction,
+  useChildThreads,
   useProjectThreadSubset,
   useThread,
   useThreadDetailBootstrap,
@@ -74,7 +75,7 @@ import {
   type ProjectThreadSubsetFilters,
 } from "../../hooks/queries/thread-queries";
 import { isTransientReadError } from "@/hooks/queries/query-helpers";
-import { usePromptDraftStorage } from "@/hooks/usePromptDraftStorage";
+import { getPromptDraftAccessor } from "@/hooks/usePromptDraftStorage";
 import { subscribeComposerFocusRequests } from "@/lib/composer-focus-requests";
 import { ThreadGitActionDialog } from "@/components/dialogs/ThreadGitActionDialog";
 import { PageShell } from "@/components/ui/page-shell.js";
@@ -829,16 +830,10 @@ function ThreadDetailViewInternal(props: ThreadDetailViewInternalProps) {
     filters: EMPTY_PROJECT_THREAD_SUBSET_FILTERS,
     projectId,
   });
-  const childThreadSubsetFilters = useMemo<ProjectThreadSubsetFilters>(() => {
-    if (!thread?.id) {
-      return EMPTY_PROJECT_THREAD_SUBSET_FILTERS;
-    }
-    return { parentThreadId: thread.id };
-  }, [thread?.id]);
-  const childThreadSubsetQuery = useProjectThreadSubset({
+  // Children may live in other projects, so the list is keyed by parent only.
+  const childThreadSubsetQuery = useChildThreads({
     enabled: threadQueryState.status === "ready" && Boolean(thread?.id),
-    filters: childThreadSubsetFilters,
-    projectId,
+    parentThreadId: thread?.id,
   });
   const parentThreads = useMemo(
     () =>
@@ -988,11 +983,19 @@ function ThreadDetailViewInternal(props: ThreadDetailViewInternalProps) {
   // localStorage-backed draft — the quoted text is appended to the draft as a
   // `> ` blockquote block and renders inline in the composer immediately, with
   // no duplicated draft state.
-  const selectionPromptDraft = usePromptDraftStorage({
-    kind: "thread",
-    projectId: thread?.projectId ?? projectId ?? "",
-    threadId: thread?.id ?? "",
-  });
+  // This view only needs draft actions at event time. Subscribing to the draft
+  // here made every composer write re-render the surrounding thread tree.
+  const selectionPromptDraftProjectId = thread?.projectId ?? projectId ?? "";
+  const selectionPromptDraftThreadId = thread?.id ?? "";
+  const selectionPromptDraft = useMemo(
+    () =>
+      getPromptDraftAccessor({
+        kind: "thread",
+        projectId: selectionPromptDraftProjectId,
+        threadId: selectionPromptDraftThreadId,
+      }),
+    [selectionPromptDraftProjectId, selectionPromptDraftThreadId],
+  );
   const addQuoteToComposer = selectionPromptDraft.addQuote;
   // Desktop quote actions keep their existing focus handoff. Mobile web does
   // not focus inputs programmatically; see PromptBoxInternal.
@@ -1923,10 +1926,6 @@ function ThreadDetailViewInternal(props: ThreadDetailViewInternalProps) {
           ? threadSourceThreadId
           : thread?.parentThreadId;
       if (!thread || !relatedThreadId) return null;
-      const href = getThreadRoutePath({
-        projectId: thread.projectId,
-        threadId: relatedThreadId,
-      });
       // A side chat is a fork too, so it is tested first.
       const relationship = isSideChatThread
         ? "side-chat"
@@ -1935,6 +1934,12 @@ function ThreadDetailViewInternal(props: ThreadDetailViewInternalProps) {
           : "parent";
       const relatedThread =
         relationship === "parent" ? parentThread : sourceThread;
+      // A hierarchy parent may live in another project, so the link routes
+      // through the parent's own project once it is loaded.
+      const href = getThreadRoutePath({
+        projectId: relatedThread?.projectId ?? thread.projectId,
+        threadId: relatedThreadId,
+      });
       if (relatedThread === undefined) {
         // Related record not yet loaded — show id-based fallback so the user
         // doesn't get a flicker of "no related thread" before resolution.
@@ -1949,7 +1954,8 @@ function ThreadDetailViewInternal(props: ThreadDetailViewInternalProps) {
       if (
         relatedThread.archivedAt !== null ||
         relatedThread.deletedAt !== null ||
-        relatedThread.projectId !== thread.projectId
+        (relationship !== "parent" &&
+          relatedThread.projectId !== thread.projectId)
       ) {
         return null;
       }
@@ -2824,6 +2830,7 @@ function ThreadDetailViewInternal(props: ThreadDetailViewInternalProps) {
           metadata={{
             thread,
             projectId,
+            parentThreadProjectId: parentThread?.projectId ?? null,
             parentThreadDisplayName: parentThreadDisplayName ?? null,
             parentThreads,
             canAssignToParent,

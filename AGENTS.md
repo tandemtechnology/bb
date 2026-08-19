@@ -42,6 +42,7 @@
 
 - Prefer sanctioned typography tokens over arbitrary `text-[Npx]` classes.
 - Derive theme color tokens from the `--canvas`/`--ink` anchors (`color-mix(in oklch, var(--ink) N%, var(--canvas))`) or from another derived token — never hand-set an `oklch(L 0 0)` literal. Achromatic literals don't follow custom palettes (Nord, Dracula, …), which re-anchor only `--canvas`/`--ink`, so a hardcoded token strands a neutral-gray element in an otherwise tinted UI. Mix opaque steps `in oklch`; mix translucent steps (a `transparent` pole) `in oklab` so the hue survives. `apps/app/src/components/ui/theme.css` is the source of truth and `theme.test.ts` guards it.
+- Never scope styles with the CSS `@scope` at-rule. WebKit resolves scope containment per element per scoped rule with no selector bucketing, so a rule set inside `@scope` costs `elements × rules` on every style recalculation. Measured on a 2,635-element page: one plugin's Tailwind utilities layer inside `@scope` took 306ms per recalculation, 7ms after rewriting to a `:where()` prefix, against a 6ms floor for the whole document. Blink shows none of it, so this is invisible in Chrome and dominant in Safari. To confine rules to a subtree, prefix each selector with a zero-specificity `:where(<roots>) ` arm plus a `:where(<roots>)` compound arm — `packages/plugin-build/src/scope-plugin-utilities.ts` does this for every plugin's compiled stylesheet and explains why both arms are required. When style recalculation is slow, bisect it: disable stylesheets one at a time and time `getComputedStyle` after invalidating a custom property on `:root`.
 - Use the shared persistent responsive drawer for every compact slide-out menu, picker, popover, and dialog. Do not use modal drawer primitives that add `inert` or `aria-hidden` to the app root: iOS Safari can recalculate styles for the full app tree and stall the interaction. Start the drawer transform before heavy content, realize that content after two animation frames with a timeout fallback, and retain it after the first open. Verify representative drawers in iOS Simulator Safari and protect the app-root and deferred-realization behavior with tests.
 
 ## Build And Typecheck
@@ -57,6 +58,8 @@
 
 ## GitHub Issues And Pull Requests
 
+- Follow [docs/filing-issues.md](docs/filing-issues.md) when you file an issue. Reproduce first; give versions, minimal copy-pasteable steps, expected vs actual output pasted verbatim, evidence with commit permalinks, and what you ruled out. Use the issue form's sections. Do not file from a single symptom or log line, and do not open a duplicate — add evidence to the existing issue instead.
+- Follow `.github/PULL_REQUEST_TEMPLATE.md` when you open a pull request: what was wrong (root cause), what changed, how you verified (tests that fail before and pass after), `Fixes #N`.
 - When an agent creates a GitHub issue or pull request, add this line at the end of the body:
 
   ```

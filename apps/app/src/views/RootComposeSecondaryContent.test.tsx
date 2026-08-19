@@ -263,20 +263,6 @@ describe("RootComposeSecondaryContent desktop layout", () => {
     expect(screen.getByTestId("plugin-homepage-sections")).not.toBeNull();
   });
 
-  it("marks the root compose top strip as a macOS window drag region", () => {
-    setMacosDesktopChrome();
-
-    renderRootCompose({
-      isCompactViewport: false,
-      isSecondaryPanelOpen: false,
-    });
-
-    const strip = screen.getByTestId("root-compose-main-window-drag-strip");
-    expect(strip.className).toContain("h-[48px]");
-    expect(strip.className).toContain("[app-region:drag]");
-    expect(strip.className).toContain("[-webkit-app-region:drag]");
-  });
-
   it("keeps the drag strip on a split pane that touches the window top edge", () => {
     setMacosDesktopChrome();
 

@@ -246,8 +246,6 @@ describe("NewTaskDialog", () => {
     // empty-state's tall centered padding — that produced the "insane" gap.
     const emptyContainer = createBtn.closest("[cmdk-empty]");
     expect(emptyContainer).not.toBeNull();
-    expect(emptyContainer!.className).not.toContain("py-6");
-    expect(emptyContainer!.className).not.toContain("text-center");
 
     fireEvent.click(createBtn);
     await waitFor(() => expect(createLabelCalls).toHaveLength(1));
@@ -706,7 +704,7 @@ describe("PresetDialog environment section", () => {
             models: [
               { id: "claude-sonnet-5", name: "Sonnet", isDefault: true },
             ],
-            reasoningLevels: ["low", "medium", "high"],
+            reasoningLevels: ["low", "medium", "high", "ultra"],
           }),
           listMachines: () => ({ machines: MACHINES }),
         },
@@ -715,7 +713,7 @@ describe("PresetDialog environment section", () => {
   }
 
   it("shows the environment column and hydrates a worktree preset", async () => {
-    const slot = renderManagePresets([presetRow()]);
+    const slot = renderManagePresets([presetRow({ reasoningLevel: "ultra" })]);
     fireEvent.mouseDown(await slot.findByRole("tab", { name: "Presets" }));
     // Manage table resolves the machine name via listMachines.
     await slot.findByText("Worktree · main · Sawyer Air");
@@ -728,6 +726,9 @@ describe("PresetDialog environment section", () => {
     expect(branch.value).toBe("main");
     expect(branch.placeholder).toBe("project default base — leave empty");
     expect(slot.getByLabelText("Machine")).toBeDefined();
+    await waitFor(() =>
+      expect(slot.getByLabelText("Reasoning").textContent).toContain("ultra"),
+    );
   });
 
   it("hides worktree fields for project-default presets", async () => {

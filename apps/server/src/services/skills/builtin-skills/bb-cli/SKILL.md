@@ -318,6 +318,9 @@ environment pull-request show <id>`. Diff commands require an explicit target
 - Use `--parent-self` inside a thread to parent the new thread to the current
   thread.
 - Use `--parent-thread <thread-id>` to choose another specific parent.
+- A parent can live in a different project. Pass `--project <other-id>` with
+  `--parent-self` to delegate work in another repository; the child still
+  reports back to its parent and stays under its parent's permission ceiling.
 - If provider or model choice matters, inspect options with `bb provider list`
   and `bb provider models <provider-id>`. Both accept `--machine <id-or-name>`
   (alias `--host`) or `--environment <id>` to inspect the machine where work
@@ -580,6 +583,14 @@ add <key-or-comment-id> --file <path>` (task key = task-level; comment ID
   `bb automation create --project <id> --name "..." --cron "..." --timezone "..." --script-file ./watch.sh`
   (or `--script "<inline>"`). A script that exits 0 with empty stdout, or whose
   last non-empty line is `{"wakeAgent": false}`, stays silent.
+- `--script-file` reads the file relative to your cwd from the thread's
+  environment host (the server host outside a thread; `--host <name-or-id>`
+  overrides) and stores a private copy that runs execute. The copy is a
+  snapshot: edits to the source file do nothing until you run
+  `bb automation update <id> --project <id> --script-file <path>` again with
+  the same script flags; `create` and `update` print that exact command.
+  `create`, `update`, and `show` print the stored copy path on the `Script:`
+  line (`execution.storedScriptPath` in `--json`).
 - Script automations run on the server with cwd set to the plugin data
   directory. They have no environment/workspace. Injected variables are
   `BB_SERVER_URL`, `BB_PROJECT_ID`, `BB_AUTOMATION_ID`, and
@@ -745,7 +756,7 @@ them by mixing ink into canvas), the `--primary` accent, the secondary text tier
     bundled inside the app and install from the local copy — no network. Installed official
     plugins are pinned to the bundled copy and update with BB app releases.
   - The store also lists the **BB Community marketplace** catalog: a manifest
-    the server re-reads at startup and every six hours from
+    the server re-reads at startup and every two hours from
     `https://getbb.app/marketplace/v1/marketplace.json`
     (override with `BB_MARKETPLACE_URL`, which the server reads only at
     startup). Its entries install from their listed

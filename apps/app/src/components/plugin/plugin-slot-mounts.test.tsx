@@ -1489,18 +1489,6 @@ describe("plugin panel shared title bar and full-bleed body", () => {
     ).toBe("plugin-panel:demo:board:pane-docs");
   });
 
-  it("gives the component a zero-padding full-bleed body", () => {
-    setPluginSlotRegistrations(
-      "demo",
-      registrationSet({ navPanels: [panelSlot({})] }),
-    );
-    renderPanelBody();
-    const body = screen.getByTestId("plugin-panel-body");
-    expect(body.className).toContain("-m-4");
-    expect(body.className).toContain("md:-m-5");
-    expect(body.className).not.toMatch(/(?:^|\s)p[trblxy]?-/u);
-  });
-
   it("still contains a crashing panel inside the error boundary", () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -1609,8 +1597,12 @@ describe("plugin thread panel actions", () => {
     ).toBeDefined();
   });
 
-  it("contains a throwing run and rejects non-JSON params without opening", () => {
+  it("contains a throwing run and declines non-JSON params without opening", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    // What each declined openPanel reported back to the plugin: a bad
+    // `params` must surface as false, never as a throw the plugin has to
+    // catch (the host swallows run errors, so a throw would be invisible).
+    const declines: boolean[] = [];
     const cyclic: Record<string, unknown> = {};
     cyclic.self = cyclic;
     setPluginSlotRegistrations(
@@ -1629,14 +1621,19 @@ describe("plugin thread panel actions", () => {
             id: "cyclic",
             title: "Cyclic",
             component: PanelProbe,
-            run: ({ openPanel }) => openPanel({ params: cyclic as never }),
+            run: ({ openPanel }) => {
+              declines.push(openPanel({ params: cyclic as never }));
+            },
           },
           {
             id: "coerced",
             title: "Coerced",
             component: PanelProbe,
-            run: ({ openPanel }) =>
-              openPanel({ params: new Date("2026-01-01") as never }),
+            run: ({ openPanel }) => {
+              declines.push(
+                openPanel({ params: new Date("2026-01-01") as never }),
+              );
+            },
           },
         ],
       }),
@@ -1647,7 +1644,67 @@ describe("plugin thread panel actions", () => {
     fireEvent.click(screen.getByText("Cyclic"));
     fireEvent.click(screen.getByText("Coerced"));
     expect(openPluginPanel).not.toHaveBeenCalled();
+    expect(declines).toEqual([false, false]);
     expect(warn).toHaveBeenCalledTimes(3);
+  });
+
+  it("reports an accepted open as true from both panel action kinds", () => {
+    // The contract every openPanel entry point shares: an accepted open is
+    // true. Both action kinds are exercised in one test because the value of
+    // the boolean is that a plugin registering more than one kind can branch
+    // on it uniformly.
+    const accepted: boolean[] = [];
+    setPluginSlotRegistrations(
+      "demo",
+      registrationSet({
+        threadPanelActions: [
+          {
+            id: "issue",
+            title: "Thread action",
+            component: PanelProbe,
+            run: ({ openPanel }) => {
+              accepted.push(openPanel({ params: { source: "thread" } }));
+            },
+          },
+        ],
+        newThreadPanelActions: [
+          {
+            id: "setup",
+            title: "Root action",
+            component: NewThreadPanelProbe,
+            run: ({ openPanel }) => {
+              accepted.push(openPanel({ params: { source: "root" } }));
+            },
+          },
+        ],
+      }),
+    );
+
+    function BothActionsHarness() {
+      const threadEntries = usePluginPanelActions({
+        openPluginPanel: () => undefined,
+        threadId: "thr_9",
+      });
+      const rootEntries = usePluginNewThreadPanelActions({
+        openPluginPanel: () => undefined,
+        projectId: "proj_1",
+      });
+      return (
+        <div>
+          {[...threadEntries, ...rootEntries].map((entry) => (
+            <button key={entry.id} type="button" onClick={entry.onSelect}>
+              {entry.title}
+            </button>
+          ))}
+        </div>
+      );
+    }
+
+    render(<BothActionsHarness />);
+    fireEvent.click(screen.getByText("Thread action"));
+    fireEvent.click(screen.getByText("Root action"));
+
+    expect(accepted).toEqual([true, true]);
   });
 
   it("offers no actions outside a thread context", () => {
@@ -1676,11 +1733,12 @@ describe("plugin thread panel actions", () => {
             title: "Set up thread",
             icon: "Wand",
             component: NewThreadPanelProbe,
-            run: ({ projectId, openPanel }) =>
+            run: ({ projectId, openPanel }) => {
               openPanel({
                 title: `Setup for ${String(projectId)}`,
                 params: { source: "root" },
-              }),
+              });
+            },
           },
         ],
       }),

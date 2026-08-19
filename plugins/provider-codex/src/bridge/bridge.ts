@@ -355,6 +355,13 @@ interface CodexBridgeSession {
   settledItemIds: Set<string>;
   /** Codex-id space; open turns settle as failed if the child dies. */
   openCodexTurnIds: Set<string>;
+  /**
+   * True from thread/resume or thread/fork construction until this session's
+   * first turn/started. Codex replays the rollout's last-turn usage in that
+   * window, scoped to a turn this session never started; the bridge must not
+   * emit it under a bridge-minted turn id bb has never seen (#1727).
+   */
+  awaitingReplayedUsage: boolean;
   identityAnnounced: boolean;
   /**
    * Events translated before the session's identity is known (codex can emit
@@ -658,6 +665,24 @@ function toCanonicalEvents(
 
   if (event.type === "turn/started" && event.scope.kind === "turn") {
     session.openCodexTurnIds.add(event.scope.turnId);
+    session.awaitingReplayedUsage = false;
+  }
+  // Replayed thread-state snapshot (thread/resume, thread/fork): the turn it
+  // names was never started in this session, so its bridge-minted turn id
+  // would be unknown to bb and the server would drop it as an orphan.
+  // Context-window usage is session state and may be thread-scoped; token
+  // usage is turn-only and, on resume, duplicates the snapshot bb already
+  // persisted for that turn, so drop it.
+  if (
+    session.awaitingReplayedUsage &&
+    (event.type === "thread/tokenUsage/updated" ||
+      event.type === "thread/contextWindowUsage/updated") &&
+    event.scope.kind === "turn"
+  ) {
+    if (event.type === "thread/contextWindowUsage/updated") {
+      out.push(remapEvent(session, { ...event, scope: { kind: "thread" } }));
+    }
+    return out;
   }
   if (event.type === "turn/completed" && event.scope.kind === "turn") {
     session.openCodexTurnIds.delete(event.scope.turnId);
@@ -1104,6 +1129,7 @@ async function constructThreadSession(
     openedItemIds: new Set(),
     settledItemIds: new Set(),
     openCodexTurnIds: new Set(),
+    awaitingReplayedUsage: args.request.kind !== "start",
     identityAnnounced: false,
     pendingPreIdentityEvents: [],
     openWorkReported: false,
@@ -1347,6 +1373,19 @@ async function getModelListConnection(): Promise<CodexAppServerConnection> {
   }
 }
 
+/**
+ * Retire a cached model-list child after a request-level failure. A timeout or
+ * malformed response does not make the connection report `exited`, but it is
+ * no longer safe to reuse: a later picker refresh must get a fresh process.
+ */
+function retireModelListConnection(connection: CodexAppServerConnection): void {
+  maintenanceConnections.delete(connection);
+  if (modelListConnection === connection) {
+    modelListConnection = null;
+  }
+  connection.kill();
+}
+
 async function withChildForThread<T>(
   bbThreadId: string,
   fn: (connection: CodexAppServerConnection) => Promise<T>,
@@ -1399,8 +1438,9 @@ function handleInitialize(id: string | number): void {
 }
 
 async function handleModelList(id: string | number): Promise<void> {
+  let connection: CodexAppServerConnection | null = null;
   try {
-    const connection = await getModelListConnection();
+    connection = await getModelListConnection();
     const result = await connection.request({
       method: "model/list",
       params: {},
@@ -1415,6 +1455,9 @@ async function handleModelList(id: string | number): Promise<void> {
       selectedOnlyModels: [],
     });
   } catch (error) {
+    if (connection !== null) {
+      retireModelListConnection(connection);
+    }
     sendError(
       id,
       BRIDGE_JSON_RPC_ERRORS.BRIDGE_ERROR,
