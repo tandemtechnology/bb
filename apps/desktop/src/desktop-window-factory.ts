@@ -184,6 +184,7 @@ function createWindowOptions(
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
+      plugins: true,
       preload: args.preloadPath,
       sandbox: true,
       spellcheck: true,

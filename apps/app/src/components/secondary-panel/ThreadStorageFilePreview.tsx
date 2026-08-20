@@ -238,6 +238,26 @@ export function SecondaryPanelFilePreview({
     );
   }
 
+  if (filePreview.kind === "pdf") {
+    return (
+      <FilePreviewSurface
+        path={activePath}
+        copyPath={copyPath}
+        onSelectionAddToChat={onSelectionAddToChat}
+        onOpenInEditor={onOpenInEditor}
+        onRefresh={onRefresh}
+        isRefreshing={isRefreshing}
+        statusLabel={statusLabel}
+        state={{
+          kind: "iframe",
+          sandbox: null,
+          title: activePath,
+          url: filePreview.url,
+        }}
+      />
+    );
+  }
+
   if (filePreview.kind === "video") {
     return (
       <FilePreviewSurface

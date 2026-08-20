@@ -566,6 +566,28 @@ describe("FilePreview", () => {
     ).toBeNull();
   });
 
+  it("renders PDFs with the native viewer", () => {
+    const path = "reports/quarterly.pdf";
+    const url = "/api/v1/preview/quarterly.pdf";
+    render(
+      <SecondaryPanelFilePreview
+        activePath={path}
+        filePreview={{
+          kind: "pdf",
+          mimeType: "application/pdf",
+          path,
+          url,
+        }}
+        isLoading={false}
+      />,
+    );
+
+    const frame = screen.getByTitle(path);
+    expect(frame.tagName).toBe("IFRAME");
+    expect(frame.getAttribute("src")).toBe(url);
+    expect(frame.hasAttribute("sandbox")).toBe(false);
+  });
+
   it("passes cache keys for loaded text previews to Pierre", async () => {
     const firstPreview = {
       kind: "text" as const,

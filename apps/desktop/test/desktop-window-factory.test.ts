@@ -275,6 +275,7 @@ describe("desktop window factory", () => {
     expect(createdWindows[0]?.options.minHeight).toBe(MIN_WINDOW_HEIGHT);
     expect(createdWindows[0]?.options.minWidth).toBe(MIN_WINDOW_WIDTH);
     expect(createdWindows[0]?.options.titleBarStyle).toBe("hiddenInset");
+    expect(createdWindows[0]?.options.webPreferences?.plugins).toBe(true);
     expect(createdWindows[0]?.options.webPreferences?.spellcheck).toBe(true);
     expect(createdWindows[0]?.webContents.spellCheckerEnabledValues).toEqual([
       true,

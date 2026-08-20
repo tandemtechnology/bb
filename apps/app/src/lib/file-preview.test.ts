@@ -58,6 +58,36 @@ describe("file-preview", () => {
     });
   });
 
+  it("builds PDF previews from MIME type or file extension", () => {
+    const declaredPreview = buildFilePreview({
+      contentBytes: Uint8Array.from([37, 80, 68, 70, 45, 0]),
+      mimeType: "application/pdf",
+      path: "download",
+      url: "/files/download",
+    });
+    const extensionPreview = buildFilePreview({
+      contentBytes: Uint8Array.from([37, 80, 68, 70, 45, 0]),
+      mimeType: "application/octet-stream",
+      name: "report.PDF",
+      path: "generated/download",
+      url: "/files/generated/download",
+    });
+
+    expect(declaredPreview).toEqual({
+      kind: "pdf",
+      mimeType: "application/pdf",
+      path: "download",
+      url: "/files/download",
+    });
+    expect(extensionPreview).toEqual({
+      kind: "pdf",
+      mimeType: "application/octet-stream",
+      name: "report.PDF",
+      path: "generated/download",
+      url: "/files/generated/download",
+    });
+  });
+
   it("builds video previews for video mime types", () => {
     const preview = buildFilePreview({
       contentBytes: Uint8Array.from([0, 0, 0, 24]),
