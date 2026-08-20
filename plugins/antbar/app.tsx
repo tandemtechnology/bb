@@ -16,12 +16,15 @@ import {
   definePluginApp,
   experimental_useSidebarThreadActions,
   experimental_useSidebarThreads,
+  experimental_NewThreadComposer as NewThreadComposer,
   useBbContext,
   useBbNavigate,
   useRealtime,
   useRpc,
 } from "@bb/plugin-sdk/app";
 import type {
+  NewThreadRequest,
+  PluginNavPanelProps,
   PluginSidebarThread,
   PluginThreadListProps,
 } from "@bb/plugin-sdk/app";
@@ -42,6 +45,9 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
 } from "@/components/ui/dropdown-menu";
 import { searchGroupEmojis } from "./emoji";
 import { Icon, type IconName } from "@/components/ui/icon";
@@ -53,6 +59,7 @@ import {
   indexThreads,
   nestThreads,
 } from "./thread-family";
+import { groupThreadRoute, parseGroupThreadRoute } from "./new-thread-route";
 
 type Rpc = ReturnType<typeof useRpc<typeof rpcContract>>;
 
@@ -1072,33 +1079,35 @@ function SidebarRow({
               {thread.isUnread ? "Mark read" : "Mark unread"}
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            {projectGroups.length === 0 ? (
-              <DropdownMenuItem disabled>
-                No groups in this project
-              </DropdownMenuItem>
-            ) : (
-              projectGroups.map((group) => (
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger>Move to…</DropdownMenuSubTrigger>
+              <DropdownMenuSubContent className="max-h-80 overflow-y-auto">
+                {projectGroups.length === 0 ? (
+                  <DropdownMenuItem disabled>
+                    No groups in this project
+                  </DropdownMenuItem>
+                ) : (
+                  projectGroups.map((group) => (
+                    <DropdownMenuItem
+                      key={group.id}
+                      disabled={group.id === currentGroupId}
+                      onSelect={() =>
+                        onAssign(thread.id, thread.projectId, group.id)
+                      }
+                    >
+                      {groupLabel(group)}
+                    </DropdownMenuItem>
+                  ))
+                )}
+                <DropdownMenuSeparator />
                 <DropdownMenuItem
-                  key={group.id}
-                  disabled={group.id === currentGroupId}
-                  onSelect={() =>
-                    onAssign(thread.id, thread.projectId, group.id)
-                  }
+                  disabled={currentGroupId === null}
+                  onSelect={() => onAssign(thread.id, thread.projectId, null)}
                 >
-                  {depth > 0 ? "Move thread family to " : "Move to "}
-                  {groupLabel(group)}
+                  Ungrouped
                 </DropdownMenuItem>
-              ))
-            )}
-            {currentGroupId !== null ? (
-              <DropdownMenuItem
-                onSelect={() => onAssign(thread.id, thread.projectId, null)}
-              >
-                {depth > 0
-                  ? "Remove thread family from group"
-                  : "Remove from group"}
-              </DropdownMenuItem>
-            ) : null}
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
             <DropdownMenuSeparator />
             <DropdownMenuItem onSelect={() => actions.archive(thread.id)}>
               Archive
@@ -1269,6 +1278,7 @@ function AntBarSidebar({
 }: PluginThreadListProps) {
   const { status, threads, projects } = experimental_useSidebarThreads();
   const actions = experimental_useSidebarThreadActions();
+  const navigate = useBbNavigate();
   const rpc = useRpc<typeof rpcContract>();
 
   const threadsById = useMemo(() => indexThreads(threads), [threads]);
@@ -1491,9 +1501,8 @@ function AntBarSidebar({
                     const groupKey = `grp:${project.id}:${section.id ?? "ungrouped"}`;
                     const groupCollapsed =
                       !searching && collapsed.has(groupKey);
-                    const label = section.group
-                      ? groupLabel(section.group)
-                      : "Ungrouped";
+                    const group = section.group;
+                    const label = group ? groupLabel(group) : "Ungrouped";
                     const canDrop = drag?.projectId === project.id;
                     const isDropTarget = canDrop && dragOverKey === groupKey;
                     return (
@@ -1523,6 +1532,19 @@ function AntBarSidebar({
                           onToggle={() => toggle(groupKey)}
                           count={rows.length}
                           padClass="pl-4"
+                          onNewThread={
+                            group
+                              ? () => {
+                                  navigate.toPluginPanel("groups", {
+                                    subPath: groupThreadRoute({
+                                      projectId: project.id,
+                                      groupId: group.id,
+                                    }),
+                                  });
+                                  onNavigate();
+                                }
+                              : undefined
+                          }
                         >
                           {label}
                         </CollapseHeader>
@@ -1577,13 +1599,85 @@ function AntBarSidebar({
 
 // --------------------------------------------------------------------------
 
+function GroupThreadComposer({
+  projectId,
+  groupId,
+}: {
+  projectId: string;
+  groupId: string;
+}) {
+  const { data, error, rpc } = useBoard(projectId);
+  const navigate = useBbNavigate();
+  const group = data?.groups.find((candidate) => candidate.id === groupId);
+
+  const startThread = useCallback(
+    async (request: NewThreadRequest) => {
+      if (request.projectId !== projectId) {
+        throw new Error(`Expected project ${projectId}`);
+      }
+      const result = await rpc.call("createThread", { request, groupId });
+      navigate.toThread(result.threadId);
+    },
+    [groupId, navigate, projectId, rpc],
+  );
+
+  if (error) {
+    return <p className="p-4 text-sm text-destructive">{error}</p>;
+  }
+  if (!data) {
+    return <p className="p-4 text-sm text-muted-foreground">Loading…</p>;
+  }
+  if (!group) {
+    return (
+      <div className="flex h-full items-center justify-center p-8 text-sm text-muted-foreground">
+        This group no longer exists.
+      </div>
+    );
+  }
+
+  return (
+    <div className="mx-auto flex h-full w-full max-w-4xl flex-col gap-3 p-4 md:p-6">
+      <div className="flex items-center gap-2">
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={() => navigate.toPluginPanel("groups")}
+        >
+          <Icon name="ChevronLeft" className="size-4" />
+          Groups
+        </Button>
+        <p className="min-w-0 truncate text-sm font-medium text-foreground">
+          New thread in {groupLabel(group)}
+        </p>
+      </div>
+      <NewThreadComposer
+        className="min-h-0 flex-1"
+        defaultProjectId={projectId}
+        draftKey={`antbar:new-thread:${projectId}:${groupId}`}
+        focusRequest={1}
+        layout="contained"
+        onSubmit={startThread}
+        placeholder={`Start a thread in ${group.name}…`}
+      />
+    </div>
+  );
+}
+
+function BoardRoute({ subPath }: PluginNavPanelProps) {
+  const route = parseGroupThreadRoute(subPath);
+  return route ? <GroupThreadComposer {...route} /> : <Board />;
+}
+
+// --------------------------------------------------------------------------
+
 export default definePluginApp((app) => {
   app.slots.navPanel({
     id: "board",
     title: "Groups",
     icon: "Columns",
     path: "groups",
-    component: Board,
+    component: BoardRoute,
   });
   app.slots.threadPanelAction({
     id: "assign",
