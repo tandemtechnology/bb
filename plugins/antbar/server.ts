@@ -11,6 +11,7 @@ import {
   type PluginCliContext,
   type PluginCliResult,
 } from "@bb/plugin-sdk";
+import type { NewThreadRequest } from "@bb/plugin-sdk/app";
 import type BetterSqlite3 from "better-sqlite3";
 import { z } from "zod";
 import { migrateLegacyThreadGroups } from "./migration";
@@ -37,6 +38,32 @@ const groupSchema = z
   })
   .strict();
 type Group = z.infer<typeof groupSchema>;
+
+function isNewThreadRequest(value: unknown): value is NewThreadRequest {
+  if (typeof value !== "object" || value === null) return false;
+  const candidate = value as Record<string, unknown>;
+  const isNonEmptyString = (field: unknown) =>
+    typeof field === "string" && field.length > 0;
+  return (
+    isNonEmptyString(candidate.projectId) &&
+    isNonEmptyString(candidate.providerId) &&
+    isNonEmptyString(candidate.model) &&
+    isNonEmptyString(candidate.reasoningLevel) &&
+    isNonEmptyString(candidate.permissionMode) &&
+    (candidate.serviceTier === undefined ||
+      isNonEmptyString(candidate.serviceTier)) &&
+    typeof candidate.executionInputSources === "object" &&
+    candidate.executionInputSources !== null &&
+    typeof candidate.environment === "object" &&
+    candidate.environment !== null &&
+    Array.isArray(candidate.input) &&
+    candidate.input.length > 0
+  );
+}
+
+const newThreadRequestSchema = z.custom<NewThreadRequest>(isNewThreadRequest, {
+  message: "Expected a NewThreadRequest from the bb composer",
+});
 
 const threadCardSchema = z
   .object({
@@ -110,6 +137,15 @@ export const rpcContract = defineRpcContract({
       })
       .strict(),
     output: z.object({ ok: z.literal(true) }).strict(),
+  },
+  createThread: {
+    input: z
+      .object({
+        request: newThreadRequestSchema,
+        groupId: groupIdSchema,
+      })
+      .strict(),
+    output: z.object({ threadId: z.string() }).strict(),
   },
   // Used by the thread-side assign tab to render its current selection.
   threadGroup: {
@@ -422,6 +458,24 @@ export default async function plugin(bb: BbPluginApi) {
     async assignThread({ threadId, projectId, groupId }) {
       await assignThreadFamily(threadId, projectId, groupId);
       return { ok: true as const };
+    },
+
+    async createThread({ request, groupId }) {
+      const group = getGroupRow(db, groupId);
+      if (!group) throw new Error(`Unknown group ${groupId}`);
+      if (group.projectId !== request.projectId) {
+        throw new Error(
+          `Group ${groupId} does not belong to ${request.projectId}`,
+        );
+      }
+
+      const thread = await bb.sdk.threads.spawn({ ...request });
+      db.prepare(
+        `INSERT INTO thread_group (thread_id, group_id, project_id)
+         VALUES (?, ?, ?)`,
+      ).run(thread.id, groupId, request.projectId);
+      boardChanged(request.projectId);
+      return { threadId: thread.id };
     },
 
     async threadGroup({ threadId }) {
