@@ -133,6 +133,7 @@ export async function inferThreadMetadata(
   const outcome = await generateThreadMetadataWithOutcome(deps, {
     input: args.input,
     threadId: args.threadId,
+    titleToReplace: null,
     timeoutMaxAttempts: INFERENCE_POLICY.threadMetadata.maxAttempts,
     timeoutMs: INFERENCE_POLICY.threadMetadata.timeoutMs,
   });

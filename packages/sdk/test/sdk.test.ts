@@ -1228,6 +1228,32 @@ describe("@bb/sdk", () => {
     });
   });
 
+  it("requests a regenerated thread title", async () => {
+    const queue = createFetchQueue([
+      {
+        body: {
+          id: "thr_title",
+          title: "Clear generated title",
+        },
+      },
+    ]);
+    const sdk = createBbSdk({
+      transport: createHttpTransport({
+        baseUrl: "http://bb.test",
+        fetch: queue.fetch,
+        runtime: "node",
+      }),
+    });
+
+    await sdk.threads.experimental_regenerateTitle({ threadId: "thr_title" });
+
+    expect(queue.requests[0]).toEqual({
+      bodyText: undefined,
+      method: "POST",
+      url: "http://bb.test/api/v1/threads/thr_title/regenerate-title",
+    });
+  });
+
   it("sends the queued message version when updating its content", async () => {
     const queue = createFetchQueue([{ body: { id: "qmsg_123" } }]);
     const sdk = createBbSdk({

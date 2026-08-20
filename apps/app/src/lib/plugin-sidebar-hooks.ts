@@ -17,7 +17,10 @@ import {
 } from "@/hooks/queries/environment-queries";
 import { useHosts } from "@/hooks/queries/host-queries";
 import { useSidebarNavigation } from "@/hooks/queries/sidebar-navigation-query";
-import { useUpdateThread } from "@/hooks/mutations/thread-state-mutations";
+import {
+  useRegenerateThreadTitle,
+  useUpdateThread,
+} from "@/hooks/mutations/thread-state-mutations";
 import { useThreadSplitsEnabled } from "@/hooks/useThreadSplitsEnabled";
 import { toPluginSidebarThread } from "./plugin-sidebar-threads";
 import { useSetRootComposeProjectId } from "./root-compose-selection";
@@ -121,6 +124,8 @@ export function useSidebarThreadActions(): PluginSidebarThreadActions {
   // Destructure `.mutateAsync`: the mutation object's identity changes on every
   // pending flip, which would defeat the memo below.
   const { mutateAsync: updateThreadAsync } = useUpdateThread();
+  const { mutateAsync: regenerateThreadTitleAsync } =
+    useRegenerateThreadTitle();
 
   const requireEntry = useCallback(
     (threadId: string): ThreadListEntry => {
@@ -183,6 +188,10 @@ export function useSidebarThreadActions(): PluginSidebarThreadActions {
       async rename(threadId, title) {
         await updateThreadAsync({ id: threadId, title });
       },
+      async experimental_regenerateTitle(threadId) {
+        requireEntry(threadId);
+        await regenerateThreadTitleAsync({ id: threadId });
+      },
       archive(threadId) {
         hostActions.archiveThreadAndChildren(requireEntry(threadId));
       },
@@ -197,6 +206,7 @@ export function useSidebarThreadActions(): PluginSidebarThreadActions {
       hostActions,
       isCompact,
       navigate,
+      regenerateThreadTitleAsync,
       requireEntry,
       setRootComposeProjectId,
       store,

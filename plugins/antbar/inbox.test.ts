@@ -135,6 +135,27 @@ test("searches the visible title and excludes archived threads", () => {
   );
 });
 
+test("keeps ancestors visible when search matches a descendant", () => {
+  const result = projectInbox(
+    [
+      thread({ id: "root", title: "Main task" }),
+      thread({ id: "child", title: "Matching child", parentThreadId: "root" }),
+      thread({
+        id: "grandchild",
+        title: "Nested match",
+        parentThreadId: "child",
+      }),
+      thread({ id: "unrelated", title: "Another task" }),
+    ],
+    "nested",
+  );
+
+  assert.deepEqual(
+    result.grouped.map(({ id }) => id),
+    ["root", "child", "grandchild"],
+  );
+});
+
 test("sorts grouped rows by pin, activity, then id", () => {
   const rows = [
     thread({ id: "recent", updatedAt: 50 }),

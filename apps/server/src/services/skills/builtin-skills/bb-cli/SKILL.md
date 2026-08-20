@@ -197,6 +197,9 @@ isolated|reuse`, or anchor with `--source-seq-end`. Permission mode inherits
   inherited value. A hidden child still reports its turns and blockers to its
   parent thread; only forks and side chats stay silent. Promote or hide an
   existing thread with `bb thread update <id> --visibility visible|hidden`.
+- Use `bb thread update <id> --title "Clear title"` to set a title directly,
+  or `bb thread regenerate-title <id>` to rerun title inference from the
+  thread's initial prompt.
 - Stop a finished hidden worker with `bb thread stop <id>` to release its agent
   runtime promptly. Archive it first when it no longer belongs in active thread
   lists. Stop preserves the thread and supports a later resume.

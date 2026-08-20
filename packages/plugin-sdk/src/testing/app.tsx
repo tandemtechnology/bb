@@ -913,6 +913,12 @@ export function renderSlot<
     async rename(threadId, title) {
       sidebarActionCalls.push({ method: "rename", threadId, title });
     },
+    async experimental_regenerateTitle(threadId) {
+      sidebarActionCalls.push({
+        method: "experimental_regenerateTitle",
+        threadId,
+      });
+    },
     archive(threadId) {
       sidebarActionCalls.push({ method: "archive", threadId });
     },

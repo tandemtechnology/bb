@@ -10,8 +10,8 @@
 //
 // Data flows over RPC (see ./server contract) and refreshes live via
 // useRealtime("board:<projectId>"). Style with host theme tokens only.
-import { useCallback, useEffect, useMemo, useState } from "react";
-import type { ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { FormEvent, ReactNode } from "react";
 import {
   definePluginApp,
   experimental_useSidebarThreadActions,
@@ -43,8 +43,16 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { searchGroupEmojis } from "./emoji";
 import { Icon, type IconName } from "@/components/ui/icon";
 import { projectInbox, sortThreads, threadTitle } from "./inbox";
+import {
+  effectiveGroupId,
+  familyRootId,
+  familyThreadIds,
+  indexThreads,
+  nestThreads,
+} from "./thread-family";
 
 type Rpc = ReturnType<typeof useRpc<typeof rpcContract>>;
 
@@ -409,8 +417,17 @@ function GroupDialog({
   const [name, setName] = useState("");
   const [emoji, setEmoji] = useState("");
   const [color, setColor] = useState("");
+  const [emojiPickerOpen, setEmojiPickerOpen] = useState(false);
+  const [emojiQuery, setEmojiQuery] = useState("");
+  const emojiSearchRef = useRef<HTMLInputElement>(null);
+  const emojiOptions = useMemo(
+    () => searchGroupEmojis(emojiQuery),
+    [emojiQuery],
+  );
 
   useEffect(() => {
+    setEmojiPickerOpen(false);
+    setEmojiQuery("");
     if (state?.mode === "edit") {
       setName(state.group.name);
       setEmoji(state.group.emoji);
@@ -421,6 +438,20 @@ function GroupDialog({
       setColor("");
     }
   }, [state]);
+
+  useEffect(() => {
+    if (!emojiPickerOpen) return;
+    const frame = window.requestAnimationFrame(() => {
+      emojiSearchRef.current?.focus();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [emojiPickerOpen]);
+
+  const selectEmoji = (value: string) => {
+    setEmoji(value);
+    setEmojiPickerOpen(false);
+    setEmojiQuery("");
+  };
 
   const open = state !== null;
   const submit = () => {
@@ -455,13 +486,96 @@ function GroupDialog({
         </DialogHeader>
         <div className="flex flex-col gap-3">
           <div className="flex gap-2">
-            <Input
-              value={emoji}
-              onChange={(e) => setEmoji(e.target.value)}
-              placeholder="🚧"
-              className="w-16 text-center"
-              aria-label="Emoji"
-            />
+            <DropdownMenu
+              open={emojiPickerOpen}
+              onOpenChange={(next) => {
+                setEmojiPickerOpen(next);
+                if (!next) setEmojiQuery("");
+              }}
+            >
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-14 shrink-0 text-lg"
+                  aria-label={
+                    emoji
+                      ? `Change group emoji, currently ${emoji}`
+                      : "Choose group emoji"
+                  }
+                >
+                  <span className={emoji ? "" : "opacity-40"} aria-hidden>
+                    {emoji || "🙂"}
+                  </span>
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                align="start"
+                className="w-64 p-2"
+                mobileTitle="Choose group emoji"
+              >
+                <Input
+                  ref={emojiSearchRef}
+                  value={emojiQuery}
+                  onChange={(event) => setEmojiQuery(event.target.value)}
+                  placeholder="Search emoji or :shortcode:"
+                  aria-label="Search emoji"
+                  role="searchbox"
+                  className="mb-2"
+                  onKeyDown={(event) => {
+                    event.stopPropagation();
+                    if (event.key === "Enter") {
+                      const firstMatch = emojiOptions[0];
+                      if (firstMatch) {
+                        event.preventDefault();
+                        selectEmoji(firstMatch.value);
+                      }
+                    } else if (event.key === "Escape") {
+                      event.preventDefault();
+                      setEmojiPickerOpen(false);
+                    }
+                  }}
+                />
+                {emojiOptions.length === 0 ? (
+                  <div
+                    role="status"
+                    className="px-2 py-6 text-center text-sm text-muted-foreground"
+                  >
+                    No emoji found
+                  </div>
+                ) : (
+                  <div className="grid max-h-52 grid-cols-6 gap-1 overflow-y-auto">
+                    {emojiOptions.map((option) => (
+                      <DropdownMenuItem
+                        key={option.value}
+                        role="menuitemradio"
+                        aria-checked={emoji === option.value}
+                        textValue={`${option.label} ${option.shortcode}`}
+                        title={`${option.label} (:${option.shortcode}:)`}
+                        className={
+                          "h-8 justify-center px-0 text-base " +
+                          (emoji === option.value ? "bg-state-active" : "")
+                        }
+                        onSelect={() => selectEmoji(option.value)}
+                      >
+                        <span aria-hidden>{option.value}</span>
+                        <span className="sr-only">
+                          {option.label}, :{option.shortcode}:
+                        </span>
+                      </DropdownMenuItem>
+                    ))}
+                  </div>
+                )}
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  disabled={!emoji}
+                  className="justify-center"
+                  onSelect={() => selectEmoji("")}
+                >
+                  No emoji
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             <Input
               value={name}
               onChange={(e) => setName(e.target.value)}
@@ -800,6 +914,7 @@ function SidebarRow({
   onNavigate,
   onDragStart,
   onDragEnd,
+  depth,
 }: {
   thread: PluginSidebarThread;
   active: boolean;
@@ -814,11 +929,50 @@ function SidebarRow({
   onNavigate: () => void;
   onDragStart: (threadId: string, projectId: string) => void;
   onDragEnd: () => void;
+  depth: number;
 }) {
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [titleDraft, setTitleDraft] = useState("");
+  const [renaming, setRenaming] = useState(false);
+  const [regenerating, setRegenerating] = useState(false);
+
   const open = () => {
     actions.open(thread.id);
     onNavigate();
   };
+
+  const beginRename = () => {
+    setTitleDraft(threadTitle(thread));
+    setRenameOpen(true);
+  };
+
+  const submitRename = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const title = titleDraft.trim();
+    if (!title || renaming) return;
+    setRenaming(true);
+    try {
+      await actions.rename(thread.id, title);
+      setRenameOpen(false);
+    } catch {
+      // The host mutation reports the error with its standard toast.
+    } finally {
+      setRenaming(false);
+    }
+  };
+
+  const regenerateTitle = async () => {
+    if (regenerating) return;
+    setRegenerating(true);
+    try {
+      await actions.experimental_regenerateTitle(thread.id);
+    } catch {
+      // The host mutation reports the error with its standard toast.
+    } finally {
+      setRegenerating(false);
+    }
+  };
+
   return (
     <div
       draggable
@@ -851,9 +1005,17 @@ function SidebarRow({
             open();
           }
         }}
-        className="flex h-full min-w-0 flex-1 items-center gap-1.5 pl-7 pr-1 outline-none"
+        className="flex h-full min-w-0 flex-1 items-center gap-1.5 pr-1 outline-none"
+        style={{ paddingLeft: 28 + Math.min(depth, 8) * 14 }}
         title={threadTitle(thread)}
       >
+        {depth > 0 ? (
+          <Icon
+            name="CornerDownRight"
+            className="size-3 shrink-0 text-muted-foreground/60"
+            aria-hidden
+          />
+        ) : null}
         {thread.isPinned ? (
           <Icon
             name="Pin"
@@ -887,6 +1049,16 @@ function SidebarRow({
             >
               Open in split
             </DropdownMenuItem>
+            <DropdownMenuItem onSelect={beginRename}>Rename…</DropdownMenuItem>
+            <DropdownMenuItem
+              disabled={regenerating}
+              onSelect={() => {
+                void regenerateTitle();
+              }}
+            >
+              {regenerating ? "Regenerating…" : "Regenerate title"}
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
             <DropdownMenuItem
               onSelect={() =>
                 void actions.setPinned(thread.id, !thread.isPinned)
@@ -913,7 +1085,8 @@ function SidebarRow({
                     onAssign(thread.id, thread.projectId, group.id)
                   }
                 >
-                  Move to {groupLabel(group)}
+                  {depth > 0 ? "Move thread family to " : "Move to "}
+                  {groupLabel(group)}
                 </DropdownMenuItem>
               ))
             )}
@@ -921,7 +1094,9 @@ function SidebarRow({
               <DropdownMenuItem
                 onSelect={() => onAssign(thread.id, thread.projectId, null)}
               >
-                Remove from group
+                {depth > 0
+                  ? "Remove thread family from group"
+                  : "Remove from group"}
               </DropdownMenuItem>
             ) : null}
             <DropdownMenuSeparator />
@@ -937,6 +1112,51 @@ function SidebarRow({
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+      <Dialog
+        open={renameOpen}
+        onOpenChange={(open) => {
+          if (!renaming) setRenameOpen(open);
+        }}
+      >
+        <DialogContent>
+          <form onSubmit={(event) => void submitRename(event)}>
+            <DialogHeader>
+              <DialogTitle>Rename thread</DialogTitle>
+              <DialogDescription>
+                Set a clear title for this thread.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="py-4">
+              <label
+                htmlFor={`antbar-thread-title-${thread.id}`}
+                className="mb-2 block text-sm font-medium text-foreground"
+              >
+                Title
+              </label>
+              <Input
+                id={`antbar-thread-title-${thread.id}`}
+                autoFocus
+                value={titleDraft}
+                onChange={(event) => setTitleDraft(event.target.value)}
+                disabled={renaming}
+              />
+            </div>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={renaming}
+                onClick={() => setRenameOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={!titleDraft.trim() || renaming}>
+                {renaming ? "Saving…" : "Save"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -1051,6 +1271,8 @@ function AntBarSidebar({
   const actions = experimental_useSidebarThreadActions();
   const rpc = useRpc<typeof rpcContract>();
 
+  const threadsById = useMemo(() => indexThreads(threads), [threads]);
+
   const [groups, setGroups] = useState<Group[]>([]);
   const [membership, setMembership] = useState<Map<string, string>>(new Map());
   const [collapsed, setCollapsed] = useState<Set<string>>(() =>
@@ -1085,15 +1307,24 @@ function AntBarSidebar({
 
   const assign = useCallback(
     (threadId: string, projectId: string, groupId: string | null) => {
+      const resolvedRootId = familyRootId(threadId, threadsById);
+      const rootId = threadsById.has(resolvedRootId)
+        ? resolvedRootId
+        : threadId;
+      const familyIds = familyThreadIds(rootId, threadsById);
       setMembership((prev) => {
         const next = new Map(prev);
-        if (groupId === null) next.delete(threadId);
-        else next.set(threadId, groupId);
+        for (const familyId of familyIds) next.delete(familyId);
+        if (groupId !== null) next.set(rootId, groupId);
         return next;
       });
-      void rpc.call("assignThread", { threadId, projectId, groupId });
+      void rpc.call("assignThread", {
+        threadId: rootId,
+        projectId,
+        groupId,
+      });
     },
-    [rpc],
+    [rpc, threadsById],
   );
 
   const query = searchQuery.trim().toLowerCase();
@@ -1209,7 +1440,7 @@ function AntBarSidebar({
           for (const g of projectGroups) byGroup.set(g.id, []);
           byGroup.set(null, []);
           for (const t of projectThreads) {
-            const gid = membership.get(t.id) ?? null;
+            const gid = effectiveGroupId(t.id, threadsById, membership);
             const key = gid && byGroup.has(gid) ? gid : null;
             byGroup.get(key)!.push(t);
           }
@@ -1246,9 +1477,8 @@ function AntBarSidebar({
               {projectCollapsed
                 ? null
                 : sections.map((section) => {
-                    const rows = (byGroup.get(section.id) ?? [])
-                      .slice()
-                      .sort(sortThreads);
+                    const rows = byGroup.get(section.id) ?? [];
+                    const nestedRows = nestThreads(rows, sortThreads);
                     // Hide Ungrouped only when there's nothing to show AND no
                     // groups exist to drop out of.
                     if (
@@ -1303,13 +1533,17 @@ function AntBarSidebar({
                                 {isDropTarget ? "Drop to assign" : "—"}
                               </p>
                             ) : (
-                              rows.map((t) => (
+                              nestedRows.map(({ thread: t, depth }) => (
                                 <SidebarRow
                                   key={t.id}
                                   thread={t}
                                   active={t.id === activeThreadId}
                                   projectGroups={projectGroups}
-                                  currentGroupId={membership.get(t.id) ?? null}
+                                  currentGroupId={effectiveGroupId(
+                                    t.id,
+                                    threadsById,
+                                    membership,
+                                  )}
                                   actions={actions}
                                   onAssign={assign}
                                   onNavigate={onNavigate}
@@ -1317,6 +1551,7 @@ function AntBarSidebar({
                                     setDrag({ threadId, projectId })
                                   }
                                   onDragEnd={endDrag}
+                                  depth={depth}
                                 />
                               ))
                             )}

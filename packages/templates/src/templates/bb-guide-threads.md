@@ -208,6 +208,8 @@ Ownership:
 
   bb thread read [id]                      Mark read
   bb thread unread [id]                    Mark unread
+  bb thread regenerate-title [id]           Regenerate title from the initial prompt
+    --self                                  Target current thread
   bb thread reorder-pinned <id> [--after <id>] [--before <id>]
 
 Queued messages:

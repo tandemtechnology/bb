@@ -12,6 +12,7 @@ import {
 const MIN_TITLE_GENERATION_WORDS = 5;
 const MAX_GENERATED_TITLE_WORDS = 5;
 const MAX_BRANCH_SLUG_LENGTH = 48;
+const MAX_TITLE_GENERATION_CONTEXT_CHARS = 6_000;
 
 type ThreadMetadataGenerationDeps = LoggedWorkSessionDeps;
 type ThreadTitleApplyDeps = Pick<AppDeps, "db" | "hub">;
@@ -24,6 +25,7 @@ export interface ApplyGeneratedThreadTitleArgs {
 export interface ThreadMetadataGenerationArgs {
   input: PromptInput[];
   threadId: string;
+  titleToReplace: string | null;
   timeoutMaxAttempts?: number;
   timeoutMs?: number;
 }
@@ -65,6 +67,24 @@ export function deriveTitleFallback(input: PromptInput[]): string | null {
     return null;
   }
   return text.length <= 80 ? text : `${text.slice(0, 77)}...`;
+}
+
+export function deriveTitleGenerationContext(
+  input: PromptInput[],
+): string | null {
+  const text = cleanPromptText(input);
+  if (text.length === 0) {
+    return null;
+  }
+  if (text.length <= MAX_TITLE_GENERATION_CONTEXT_CHARS) {
+    return text;
+  }
+
+  const separator = " ... ";
+  const availableChars = MAX_TITLE_GENERATION_CONTEXT_CHARS - separator.length;
+  const leadingChars = Math.ceil(availableChars / 2);
+  const trailingChars = availableChars - leadingChars;
+  return `${text.slice(0, leadingChars)}${separator}${text.slice(-trailingChars)}`;
 }
 
 export function shouldGenerateThreadTitle(input: PromptInput[]): boolean {
@@ -132,7 +152,7 @@ export async function generateThreadMetadataWithOutcome(
   args: ThreadMetadataGenerationArgs,
 ): Promise<ThreadMetadataGenerationOutcome> {
   const startedAt = Date.now();
-  const fallback = deriveTitleFallback(args.input);
+  const context = deriveTitleGenerationContext(args.input);
   const complete = (
     metadata: GeneratedThreadMetadata | null,
     reason?: ThreadMetadataGenerationOutcomeReason,
@@ -142,7 +162,7 @@ export async function generateThreadMetadataWithOutcome(
     ...(reason ? { reason } : {}),
   });
 
-  if (!fallback) {
+  if (!context) {
     return complete(null, "empty-input");
   }
   if (!shouldGenerateThreadTitle(args.input)) {
@@ -150,7 +170,8 @@ export async function generateThreadMetadataWithOutcome(
   }
 
   const prompt = renderTemplate("generateThreadMetadata", {
-    cleanedPrompt: fallback,
+    conversationContext: context,
+    titleToReplace: args.titleToReplace ?? "None (new thread)",
   });
   const maxAttempts = Math.max(1, args.timeoutMaxAttempts ?? 1);
 

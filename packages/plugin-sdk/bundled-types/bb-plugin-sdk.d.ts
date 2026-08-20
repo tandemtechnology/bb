@@ -11495,6 +11495,11 @@ interface PluginSidebarThreadActions {
     setRead(threadId: string, read: boolean): Promise<void>;
     /** Silent rename — no dialog. For inline editing in your own row. */
     rename(threadId: string, title: string): Promise<void>;
+    /**
+     * Ask bb to regenerate the title from the thread's initial prompt.
+     * Experimental: see docs/api_to_audit.md.
+     */
+    experimental_regenerateTitle(threadId: string): Promise<void>;
     /** Archives the thread AND its children, closing any panes showing them. */
     archive(threadId: string): void;
     /**
@@ -13620,6 +13625,7 @@ interface ThreadsArea {
     list(args?: ThreadListArgs): Promise<ThreadListResult>;
     markRead(args: ThreadActionArgs): Promise<ThreadReadStateResult>;
     markUnread(args: ThreadActionArgs): Promise<ThreadReadStateResult>;
+    experimental_regenerateTitle(args: ThreadActionArgs): Promise<ThreadMutationResult>;
     open(args: ThreadOpenArgs): Promise<ThreadOpenResult>;
     paneAction(args: ThreadPaneActionArgs): Promise<ThreadPaneActionResult>;
     output(args: ThreadOutputArgs): Promise<ThreadOutputResponse>;

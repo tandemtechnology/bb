@@ -14,7 +14,9 @@
     "dist",
     "server.ts",
     "app.tsx",
+    "emoji.ts",
     "inbox.ts",
+    "thread-family.ts",
     "migration.ts",
     "components",
     "lib",
@@ -40,7 +42,7 @@
   ],
   "scripts": {
     "build": "node --conditions=source --import tsx ../../scripts/build-official-plugins.mjs antbar",
-    "test": "node --experimental-strip-types --test inbox.test.ts migration.test.ts",
+    "test": "node --experimental-strip-types --test emoji.test.ts inbox.test.ts migration.test.ts thread-family.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {

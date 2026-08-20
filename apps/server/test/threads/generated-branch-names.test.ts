@@ -1195,6 +1195,7 @@ describe("generated managed branch names", () => {
         generateThreadMetadataWithOutcome(harness.deps, {
           input: textInput("Improve timed out metadata generation behavior"),
           threadId: "thr_timeout",
+          titleToReplace: null,
           timeoutMs: 1,
         }),
       ).resolves.toMatchObject({
@@ -1232,6 +1233,7 @@ describe("generated managed branch names", () => {
         generateThreadMetadataWithOutcome(harness.deps, {
           input: textInput("Improve timed out metadata generation behavior"),
           threadId: "thr_retry_timeout",
+          titleToReplace: null,
           timeoutMaxAttempts: 2,
           timeoutMs: 1,
         }),
@@ -1297,6 +1299,7 @@ describe("generated managed branch names", () => {
         generateThreadMetadataWithOutcome(harness.deps, {
           input: textInput("Recover transient metadata provider failures"),
           threadId: "thr_retry_service_unavailable",
+          titleToReplace: null,
           timeoutMaxAttempts: 2,
           timeoutMs: 1_000,
         }),
@@ -1328,6 +1331,7 @@ describe("generated managed branch names", () => {
         generateThreadMetadataWithOutcome(harness.deps, {
           input: textInput("Improve failed metadata generation behavior"),
           threadId: "thr_failed_metadata",
+          titleToReplace: null,
           timeoutMaxAttempts: 2,
           timeoutMs: 1,
         }),

@@ -448,6 +448,9 @@ export interface ThreadsArea {
   list(args?: ThreadListArgs): Promise<ThreadListResult>;
   markRead(args: ThreadActionArgs): Promise<ThreadReadStateResult>;
   markUnread(args: ThreadActionArgs): Promise<ThreadReadStateResult>;
+  experimental_regenerateTitle(
+    args: ThreadActionArgs,
+  ): Promise<ThreadMutationResult>;
   open(args: ThreadOpenArgs): Promise<ThreadOpenResult>;
   paneAction(args: ThreadPaneActionArgs): Promise<ThreadPaneActionResult>;
   output(args: ThreadOutputArgs): Promise<ThreadOutputResponse>;
@@ -974,6 +977,13 @@ export function createThreadsArea(args: CreateSdkAreaArgs): ThreadsArea {
     async markUnread(input) {
       return transport.readJson(
         transport.api.v1.threads[":id"].unread.$post({
+          param: { id: input.threadId },
+        }),
+      );
+    },
+    async experimental_regenerateTitle(input) {
+      return transport.readJson(
+        transport.api.v1.threads[":id"]["regenerate-title"].$post({
           param: { id: input.threadId },
         }),
       );

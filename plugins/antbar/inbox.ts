@@ -1,4 +1,5 @@
 import type { PluginSidebarThread } from "@bb/plugin-sdk";
+import { indexThreads } from "./thread-family.ts";
 
 export interface InboxProjection {
   inbox: PluginSidebarThread[];
@@ -20,14 +21,32 @@ export function projectInbox(
   searchQuery: string,
 ): InboxProjection {
   const query = searchQuery.trim().toLocaleLowerCase();
-  const visible = threads.filter(
+  const available = threads.filter((thread) => !thread.isArchived);
+  const availableById = indexThreads(available);
+  const matched = available.filter(
     (thread) =>
-      !thread.isArchived &&
-      (query.length === 0 ||
-        threadTitle(thread).toLocaleLowerCase().includes(query)),
+      query.length === 0 ||
+      threadTitle(thread).toLocaleLowerCase().includes(query),
   );
 
-  const inbox = visible
+  const groupedIds = new Set(matched.map((thread) => thread.id));
+  if (query.length > 0) {
+    for (const thread of matched) {
+      let parentId = thread.parentThreadId;
+      const visited = new Set<string>();
+      while (parentId && !visited.has(parentId)) {
+        visited.add(parentId);
+        const parent = availableById.get(parentId);
+        if (!parent) break;
+        groupedIds.add(parent.id);
+        parentId = parent.parentThreadId;
+      }
+    }
+  }
+
+  const grouped = available.filter((thread) => groupedIds.has(thread.id));
+
+  const inbox = matched
     .filter((thread) => thread.hasPendingInteraction || thread.isUnread)
     .sort(
       (left, right) =>
@@ -37,7 +56,7 @@ export function projectInbox(
 
   return {
     inbox,
-    grouped: visible,
+    grouped,
   };
 }
 

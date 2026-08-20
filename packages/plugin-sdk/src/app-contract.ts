@@ -609,6 +609,11 @@ export interface PluginSidebarThreadActions {
   setRead(threadId: string, read: boolean): Promise<void>;
   /** Silent rename — no dialog. For inline editing in your own row. */
   rename(threadId: string, title: string): Promise<void>;
+  /**
+   * Ask bb to regenerate the title from the thread's initial prompt.
+   * Experimental: see docs/api_to_audit.md.
+   */
+  experimental_regenerateTitle(threadId: string): Promise<void>;
   /** Archives the thread AND its children, closing any panes showing them. */
   archive(threadId: string): void;
   /**
