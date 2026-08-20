@@ -22,6 +22,8 @@ const MARKDOWN_FILE_EXTENSIONS = [".md", ".markdown"];
 const MARKDOWN_MIME_TYPES = new Set(["text/markdown", "text/x-markdown"]);
 const CSV_FILE_EXTENSIONS = [".csv"];
 const CSV_MIME_TYPES = new Set(["application/csv", "text/csv"]);
+const PDF_FILE_EXTENSION = ".pdf";
+const PDF_MIME_TYPE = "application/pdf";
 const HTML_FILE_EXTENSION = ".html";
 const NULL_CHARACTER = "\u0000";
 
@@ -32,7 +34,7 @@ export interface FilePreviewTarget {
 }
 
 interface FilePreviewBase extends FilePreviewTarget {
-  kind: "image" | "text" | "unsupported" | "video";
+  kind: "image" | "pdf" | "text" | "unsupported" | "video";
   mimeType: string;
 }
 
@@ -42,6 +44,10 @@ export interface ImageFilePreview extends FilePreviewBase {
 
 export interface VideoFilePreview extends FilePreviewBase {
   kind: "video";
+}
+
+export interface PdfFilePreview extends FilePreviewBase {
+  kind: "pdf";
 }
 
 export interface TextFilePreview extends FilePreviewBase {
@@ -55,6 +61,7 @@ export interface UnsupportedFilePreview extends FilePreviewBase {
 
 export type FilePreview =
   | ImageFilePreview
+  | PdfFilePreview
   | VideoFilePreview
   | TextFilePreview
   | UnsupportedFilePreview;
@@ -204,6 +211,10 @@ function hasCsvExtension(path: string): boolean {
   );
 }
 
+function hasPdfExtension(path: string): boolean {
+  return path.toLowerCase().endsWith(PDF_FILE_EXTENSION);
+}
+
 export function isHtmlFilePreviewPath(path: string): boolean {
   return path.toLowerCase().endsWith(HTML_FILE_EXTENSION);
 }
@@ -248,6 +259,16 @@ export function buildFilePreview(args: BuildFilePreviewArgs): FilePreview {
     };
   }
 
+  if (
+    args.mimeType === PDF_MIME_TYPE ||
+    hasPdfExtension(args.path) ||
+    (args.name ? hasPdfExtension(args.name) : false)
+  ) {
+    return {
+      kind: "pdf",
+      ...base,
+    };
+  }
   if (isKnownTextMimeType(args.mimeType)) {
     const textContent = decodeDeclaredTextContent(args.contentBytes);
     if (textContent === null) {
