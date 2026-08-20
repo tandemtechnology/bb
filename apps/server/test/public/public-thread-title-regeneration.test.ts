@@ -104,7 +104,7 @@ describe("public thread title regeneration", () => {
             }),
           ],
         }),
-        undefined,
+        expect.objectContaining({ signal: expect.anything() }),
       );
       expect(piAiMocks.complete).toHaveBeenCalledWith(
         expect.anything(),
@@ -117,7 +117,7 @@ describe("public thread title regeneration", () => {
             }),
           ],
         }),
-        undefined,
+        expect.objectContaining({ signal: expect.anything() }),
       );
       expect(piAiMocks.complete).toHaveBeenCalledWith(
         expect.anything(),
@@ -128,7 +128,7 @@ describe("public thread title regeneration", () => {
             }),
           ],
         }),
-        undefined,
+        expect.objectContaining({ signal: expect.anything() }),
       );
     });
   });

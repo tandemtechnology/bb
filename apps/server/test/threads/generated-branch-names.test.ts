@@ -1299,6 +1299,7 @@ describe("generated managed branch names", () => {
         generateThreadMetadataWithOutcome(harness.deps, {
           input: textInput("Recover transient metadata provider failures"),
           threadId: "thr_retry_service_unavailable",
+          titleToReplace: null,
           timeoutMaxAttempts: 2,
           timeoutMs: 1_000,
         }),
