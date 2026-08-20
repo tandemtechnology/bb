@@ -16,6 +16,9 @@ Group create/edit dialogs include a searchable emoji picker. Search by name,
 alias, or Slack-style shortcode such as `:rocket:`, then press Enter to choose
 the first match or select one from the grid.
 
+Child threads inherit their root parent's group and render indented beneath
+their parent. Moving any child moves the whole thread family together.
+
 ## Install and select
 
 From the repository root:
@@ -65,6 +68,8 @@ bb antbar create "Needs review" --project <projectId> --emoji "👀"
 bb antbar assign <threadId> <groupId>
 bb antbar assign <threadId> none
 ```
+
+Assigning any child ID applies the group change to its root thread family.
 
 ## Verify changes
 

@@ -14,6 +14,12 @@ import {
 import type BetterSqlite3 from "better-sqlite3";
 import { z } from "zod";
 import { migrateLegacyThreadGroups } from "./migration";
+import {
+  effectiveGroupId,
+  familyRootId,
+  familyThreadIds,
+  indexThreads,
+} from "./thread-family";
 
 // ---------------------------------------------------------------------------
 // Types + schemas
@@ -271,12 +277,57 @@ export default async function plugin(bb: BbPluginApi) {
     bb.realtime.publish("antbar:groups-changed", { projectId });
   }
 
+  async function resolveThreadFamily(threadId: string, projectId: string) {
+    const threads = await bb.sdk.threads.list({ projectId, limit: 500 });
+    const threadsById = indexThreads(threads);
+    const resolvedRootId = familyRootId(threadId, threadsById);
+    const rootId = threadsById.has(resolvedRootId) ? resolvedRootId : threadId;
+    const familyIds = familyThreadIds(rootId, threadsById);
+    return {
+      rootId,
+      familyIds: familyIds.length > 0 ? familyIds : [rootId],
+    };
+  }
+
+  async function assignThreadFamily(
+    threadId: string,
+    projectId: string,
+    groupId: string | null,
+  ): Promise<string> {
+    if (groupId !== null) {
+      const group = getGroupRow(db, groupId);
+      if (!group) throw new Error(`Unknown group ${groupId}`);
+      if (group.projectId !== projectId) {
+        throw new Error(`Group ${groupId} does not belong to ${projectId}`);
+      }
+    }
+
+    const { rootId, familyIds } = await resolveThreadFamily(
+      threadId,
+      projectId,
+    );
+    const tx = db.transaction(() => {
+      const remove = db.prepare(`DELETE FROM thread_group WHERE thread_id = ?`);
+      for (const familyId of familyIds) remove.run(familyId);
+      if (groupId !== null) {
+        db.prepare(
+          `INSERT INTO thread_group (thread_id, group_id, project_id)
+             VALUES (?, ?, ?)`,
+        ).run(rootId, groupId, projectId);
+      }
+    });
+    tx();
+    boardChanged(projectId);
+    return rootId;
+  }
+
   // Build the columns for a project: one per group (in order) + a trailing
   // "Ungrouped" column, filled from a single live thread read.
   async function buildBoard(projectId: string) {
     const groups = listGroupRows(db, projectId);
     const membership = membershipForProject(db, projectId);
     const threads = await bb.sdk.threads.list({ projectId, limit: 500 });
+    const threadsById = indexThreads(threads);
 
     type Card = {
       id: string;
@@ -290,7 +341,7 @@ export default async function plugin(bb: BbPluginApi) {
 
     for (const thread of threads) {
       if (thread.archivedAt !== null) continue;
-      const assigned = membership.get(thread.id) ?? null;
+      const assigned = effectiveGroupId(thread.id, threadsById, membership);
       // A membership pointing at a deleted group falls back to Ungrouped.
       const key = assigned && buckets.has(assigned) ? assigned : null;
       buckets.get(key)!.push({
@@ -368,28 +419,15 @@ export default async function plugin(bb: BbPluginApi) {
       return { ok: true as const };
     },
 
-    assignThread({ threadId, projectId, groupId }) {
-      if (groupId === null) {
-        db.prepare(`DELETE FROM thread_group WHERE thread_id = ?`).run(
-          threadId,
-        );
-      } else {
-        const group = getGroupRow(db, groupId);
-        if (!group) throw new Error(`Unknown group ${groupId}`);
-        // One group per thread: upsert keyed on thread_id.
-        db.prepare(
-          `INSERT INTO thread_group (thread_id, group_id, project_id)
-             VALUES (?, ?, ?)
-           ON CONFLICT(thread_id) DO UPDATE SET group_id = excluded.group_id,
-                                                project_id = excluded.project_id`,
-        ).run(threadId, groupId, projectId);
-      }
-      boardChanged(projectId);
+    async assignThread({ threadId, projectId, groupId }) {
+      await assignThreadFamily(threadId, projectId, groupId);
       return { ok: true as const };
     },
 
-    threadGroup({ threadId }) {
-      return { groupId: groupForThread(db, threadId) };
+    async threadGroup({ threadId }) {
+      const thread = await bb.sdk.threads.get({ threadId });
+      const { rootId } = await resolveThreadFamily(threadId, thread.projectId);
+      return { groupId: groupForThread(db, rootId) };
     },
 
     allGroups() {
@@ -477,7 +515,7 @@ export default async function plugin(bb: BbPluginApi) {
       },
       {
         name: "assign",
-        summary: "Assign a thread to a group, or 'none' to unassign",
+        summary: "Assign a thread family to a group, or 'none' to unassign",
         usage: "bb antbar assign <threadId> <groupId|none> [--project <id>]",
       },
     ],
@@ -595,34 +633,38 @@ export default async function plugin(bb: BbPluginApi) {
                 stderr: "Usage: bb antbar assign <threadId> <groupId|none>",
               };
             }
-            if (groupArg === "none") {
-              const projectId =
-                (await resolveProjectId(rest, ctx)) ??
-                (
-                  await bb.sdk.threads
-                    .get({ threadId })
-                    .catch(() => null as { projectId?: string } | null)
-                )?.projectId;
-              db.prepare(`DELETE FROM thread_group WHERE thread_id = ?`).run(
-                threadId,
-              );
-              if (projectId) boardChanged(projectId);
-              return { exitCode: 0, stdout: `Unassigned ${threadId}` };
-            }
-            const group = getGroupRow(db, groupArg);
-            if (!group) {
+            const group =
+              groupArg === "none" ? null : getGroupRow(db, groupArg);
+            if (groupArg !== "none" && !group) {
               return { exitCode: 1, stderr: `Unknown group ${groupArg}` };
             }
-            db.prepare(
-              `INSERT INTO thread_group (thread_id, group_id, project_id)
-                 VALUES (?, ?, ?)
-               ON CONFLICT(thread_id) DO UPDATE SET group_id = excluded.group_id,
-                                                    project_id = excluded.project_id`,
-            ).run(threadId, groupArg, group.projectId);
-            boardChanged(group.projectId);
+            const requestedProjectId = await resolveProjectId(rest, ctx);
+            const threadProjectId =
+              requestedProjectId ??
+              (await bb.sdk.threads.get({ threadId }).catch(() => null))
+                ?.projectId;
+            const projectId = group?.projectId ?? threadProjectId;
+            if (!projectId) {
+              return {
+                exitCode: 1,
+                stderr:
+                  "No project. Pass --project <id> or assign to a known group.",
+              };
+            }
+            const rootId = await assignThreadFamily(
+              threadId,
+              projectId,
+              group?.id ?? null,
+            );
+            if (!group) {
+              return {
+                exitCode: 0,
+                stdout: `Unassigned thread family rooted at ${rootId}`,
+              };
+            }
             return {
               exitCode: 0,
-              stdout: `Assigned ${threadId} to ${group.name} (${groupArg})`,
+              stdout: `Assigned thread family rooted at ${rootId} to ${group.name} (${group.id})`,
             };
           }
 

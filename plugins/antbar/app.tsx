@@ -46,6 +46,13 @@ import {
 import { searchGroupEmojis } from "./emoji";
 import { Icon, type IconName } from "@/components/ui/icon";
 import { projectInbox, sortThreads, threadTitle } from "./inbox";
+import {
+  effectiveGroupId,
+  familyRootId,
+  familyThreadIds,
+  indexThreads,
+  nestThreads,
+} from "./thread-family";
 
 type Rpc = ReturnType<typeof useRpc<typeof rpcContract>>;
 
@@ -907,6 +914,7 @@ function SidebarRow({
   onNavigate,
   onDragStart,
   onDragEnd,
+  depth,
 }: {
   thread: PluginSidebarThread;
   active: boolean;
@@ -921,6 +929,7 @@ function SidebarRow({
   onNavigate: () => void;
   onDragStart: (threadId: string, projectId: string) => void;
   onDragEnd: () => void;
+  depth: number;
 }) {
   const [renameOpen, setRenameOpen] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
@@ -996,9 +1005,17 @@ function SidebarRow({
             open();
           }
         }}
-        className="flex h-full min-w-0 flex-1 items-center gap-1.5 pl-7 pr-1 outline-none"
+        className="flex h-full min-w-0 flex-1 items-center gap-1.5 pr-1 outline-none"
+        style={{ paddingLeft: 28 + Math.min(depth, 8) * 14 }}
         title={threadTitle(thread)}
       >
+        {depth > 0 ? (
+          <Icon
+            name="CornerDownRight"
+            className="size-3 shrink-0 text-muted-foreground/60"
+            aria-hidden
+          />
+        ) : null}
         {thread.isPinned ? (
           <Icon
             name="Pin"
@@ -1068,7 +1085,8 @@ function SidebarRow({
                     onAssign(thread.id, thread.projectId, group.id)
                   }
                 >
-                  Move to {groupLabel(group)}
+                  {depth > 0 ? "Move thread family to " : "Move to "}
+                  {groupLabel(group)}
                 </DropdownMenuItem>
               ))
             )}
@@ -1076,7 +1094,9 @@ function SidebarRow({
               <DropdownMenuItem
                 onSelect={() => onAssign(thread.id, thread.projectId, null)}
               >
-                Remove from group
+                {depth > 0
+                  ? "Remove thread family from group"
+                  : "Remove from group"}
               </DropdownMenuItem>
             ) : null}
             <DropdownMenuSeparator />
@@ -1251,6 +1271,8 @@ function AntBarSidebar({
   const actions = experimental_useSidebarThreadActions();
   const rpc = useRpc<typeof rpcContract>();
 
+  const threadsById = useMemo(() => indexThreads(threads), [threads]);
+
   const [groups, setGroups] = useState<Group[]>([]);
   const [membership, setMembership] = useState<Map<string, string>>(new Map());
   const [collapsed, setCollapsed] = useState<Set<string>>(() =>
@@ -1285,15 +1307,24 @@ function AntBarSidebar({
 
   const assign = useCallback(
     (threadId: string, projectId: string, groupId: string | null) => {
+      const resolvedRootId = familyRootId(threadId, threadsById);
+      const rootId = threadsById.has(resolvedRootId)
+        ? resolvedRootId
+        : threadId;
+      const familyIds = familyThreadIds(rootId, threadsById);
       setMembership((prev) => {
         const next = new Map(prev);
-        if (groupId === null) next.delete(threadId);
-        else next.set(threadId, groupId);
+        for (const familyId of familyIds) next.delete(familyId);
+        if (groupId !== null) next.set(rootId, groupId);
         return next;
       });
-      void rpc.call("assignThread", { threadId, projectId, groupId });
+      void rpc.call("assignThread", {
+        threadId: rootId,
+        projectId,
+        groupId,
+      });
     },
-    [rpc],
+    [rpc, threadsById],
   );
 
   const query = searchQuery.trim().toLowerCase();
@@ -1409,7 +1440,7 @@ function AntBarSidebar({
           for (const g of projectGroups) byGroup.set(g.id, []);
           byGroup.set(null, []);
           for (const t of projectThreads) {
-            const gid = membership.get(t.id) ?? null;
+            const gid = effectiveGroupId(t.id, threadsById, membership);
             const key = gid && byGroup.has(gid) ? gid : null;
             byGroup.get(key)!.push(t);
           }
@@ -1446,9 +1477,8 @@ function AntBarSidebar({
               {projectCollapsed
                 ? null
                 : sections.map((section) => {
-                    const rows = (byGroup.get(section.id) ?? [])
-                      .slice()
-                      .sort(sortThreads);
+                    const rows = byGroup.get(section.id) ?? [];
+                    const nestedRows = nestThreads(rows, sortThreads);
                     // Hide Ungrouped only when there's nothing to show AND no
                     // groups exist to drop out of.
                     if (
@@ -1503,13 +1533,17 @@ function AntBarSidebar({
                                 {isDropTarget ? "Drop to assign" : "—"}
                               </p>
                             ) : (
-                              rows.map((t) => (
+                              nestedRows.map(({ thread: t, depth }) => (
                                 <SidebarRow
                                   key={t.id}
                                   thread={t}
                                   active={t.id === activeThreadId}
                                   projectGroups={projectGroups}
-                                  currentGroupId={membership.get(t.id) ?? null}
+                                  currentGroupId={effectiveGroupId(
+                                    t.id,
+                                    threadsById,
+                                    membership,
+                                  )}
                                   actions={actions}
                                   onAssign={assign}
                                   onNavigate={onNavigate}
@@ -1517,6 +1551,7 @@ function AntBarSidebar({
                                     setDrag({ threadId, projectId })
                                   }
                                   onDragEnd={endDrag}
+                                  depth={depth}
                                 />
                               ))
                             )}
