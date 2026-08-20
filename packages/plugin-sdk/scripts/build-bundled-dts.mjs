@@ -1,9 +1,9 @@
 // Generates the self-contained `.d.ts` bundles that `bb plugin new` ships into
 // a scaffolded plugin's `types/` directory, so authors get real BbPluginApi /
-// @bb/plugin-sdk/app types WITHOUT the (unpublished) @bb/* workspace packages
+// @get-bb/plugin-sdk/app types WITHOUT the (unpublished) @bb/* workspace packages
 // on disk.
 //
-// rollup-plugin-dts flattens @bb/plugin-sdk's own contracts plus every @bb/*
+// rollup-plugin-dts flattens @get-bb/plugin-sdk's own contracts plus every @bb/*
 // type it references (BbSdk, PromptInput, ThreadResponse, …) into the root
 // file. Testing subpaths reuse that already-portable root declaration through
 // the package's own public name instead of flattening the same contracts a
@@ -19,6 +19,8 @@ import { fileURLToPath } from "node:url";
 import { rollup } from "rollup";
 import { dts } from "rollup-plugin-dts";
 
+import { normalizeBundledDts } from "./normalize-bundled-dts.mjs";
+
 const here = path.dirname(fileURLToPath(import.meta.url));
 const pkgRoot = path.resolve(here, "..");
 const pkgsDir = path.resolve(pkgRoot, "..");
@@ -28,6 +30,11 @@ const outDir = path.join(pkgRoot, "bundled-types");
 const outputs = {
   "bb-plugin-sdk.d.ts": path.join(pkgRoot, "src/index.ts"),
   "bb-plugin-sdk-app.d.ts": path.join(pkgRoot, "src/app.ts"),
+  "bb-plugin-sdk-provider-bridge.d.ts": path.join(
+    pkgRoot,
+    "src/provider-bridge.ts",
+  ),
+  "bb-plugin-sdk-host.d.ts": path.join(pkgRoot, "src/host.ts"),
   "bb-plugin-sdk-internal-composer-customization-validation.d.ts": path.join(
     pkgRoot,
     "src/internal/composer-customization-validation.ts",
@@ -36,14 +43,24 @@ const outputs = {
     pkgRoot,
     "src/internal/composer-view.ts",
   ),
+  "bb-plugin-sdk-internal-host-policy.d.ts": path.join(
+    pkgRoot,
+    "src/internal/host-policy.ts",
+  ),
+  "bb-plugin-sdk-internal-plugin-app-collector.d.ts": path.join(
+    pkgRoot,
+    "src/internal/plugin-app-collector.ts",
+  ),
   "bb-plugin-sdk-testing.d.ts": path.join(pkgRoot, "src/testing/index.ts"),
   "bb-plugin-sdk-testing-app.d.ts": path.join(pkgRoot, "src/testing/app.tsx"),
+  "bb-plugin-sdk-testing-host.d.ts": path.join(pkgRoot, "src/testing/host.ts"),
 };
 
 // Real npm packages the bundle imports from — kept external so they resolve
 // from the scaffold's devDependencies rather than being inlined.
 const EXTERNAL = [
-  /^@bb\/plugin-sdk$/,
+  /^@get-bb\/plugin-sdk$/,
+  /^node:/,
   /^@testing-library\/react($|\/)/,
   /^better-sqlite3/,
   /^hono($|\/)/,
@@ -104,7 +121,7 @@ async function bundle(input) {
 }
 
 const HEADER = [
-  "// Portable type declarations for `@bb/plugin-sdk`. Unpublished BB",
+  "// Portable type declarations for `@get-bb/plugin-sdk`. Unpublished BB",
   "// workspace contracts are flattened; public subpaths may reuse the",
   "// package root without requiring any other @bb/* package.",
   "//",
@@ -114,26 +131,9 @@ const HEADER = [
 
 const generated = {};
 for (const [fileName, entry] of Object.entries(outputs)) {
-  generated[fileName] = `${HEADER}\n\n${await bundle(entry)}`;
-}
-
-/**
- * rollup-plugin-dts loads modules concurrently, so the emission order of
- * inferred type members (zod enum maps especially) varies run to run while
- * the content stays semantically identical. Compare (and skip rewrites) on
- * the sorted line multiset: real drift adds/removes/changes lines and is
- * still caught, but a pure reordering neither fails --check nor churns the
- * committed bytes.
- */
-function canonicalize(content) {
-  // Union member order can vary on a single emitted line as well as across
-  // object-member lines. Normalize quoted literal unions before sorting lines
-  // so semantically identical output does not rewrite committed declarations.
-  const normalizedLiteralUnions = content.replace(
-    /"(?:[^"\\]|\\.)+"(?: \| "(?:[^"\\]|\\.)+")+/gu,
-    (union) => union.split(" | ").sort().join(" | "),
+  generated[fileName] = normalizeBundledDts(
+    `${HEADER}\n\n${await bundle(entry)}`,
   );
-  return normalizedLiteralUnions.split("\n").sort().join("\n");
 }
 
 const check = process.argv.includes("--check");
@@ -143,12 +143,11 @@ if (!check) mkdirSync(outDir, { recursive: true });
 for (const [fileName, content] of Object.entries(generated)) {
   const target = path.join(outDir, fileName);
   const current = existsSync(target) ? readFileSync(target, "utf8") : null;
-  const unchanged =
-    current !== null && canonicalize(current) === canonicalize(content);
+  const unchanged = current === content;
   if (check) {
     if (!unchanged) {
       console.error(
-        `bundled-types/${fileName} is stale. Run \`pnpm --filter @bb/plugin-sdk build\`.`,
+        `bundled-types/${fileName} is stale. Run \`pnpm --filter @get-bb/plugin-sdk build\`.`,
       );
       stale = true;
     }

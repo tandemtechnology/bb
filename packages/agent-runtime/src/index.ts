@@ -1,13 +1,16 @@
 export { createAgentRuntime } from "./runtime.js";
-export { fingerprintAcpLaunchSpec } from "./acp-launch-spec-fingerprint.js";
+export {
+  fingerprintAcpLaunchSpec,
+  bridgeLaunchProcessKey,
+} from "./acp-launch-spec-fingerprint.js";
 export {
   createProviderForId,
-  listAvailableProviderInfos as listAvailableProviders,
 } from "./provider-registry.js";
 export type {
   AgentRuntime,
   AgentRuntimeAcpSkill,
   AgentRuntimeAcpSkillRoot,
+  AgentRuntimeBridgeLaunch,
   AgentRuntimeClaudeCodeSkillRoot,
   AgentRuntimeCodexSkillRoot,
   AgentRuntimeExecutionOptions,
@@ -30,10 +33,6 @@ export type {
   StartThreadResult,
   SteerTurnArgs,
   StopThreadArgs,
+  StopThreadResult,
   WaitForActiveTurnArgs,
 } from "./types.js";
-export type {
-  ProviderRawEventCoverage,
-  ProviderRawEventDescription,
-  ProviderVisibilityMetadata,
-} from "./provider-visibility.js";

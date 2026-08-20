@@ -1,8 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import {
-  archiveThread,
   claimQueuedThreadMessage,
-  createPromptHistoryEntry,
   createQueuedThreadMessageId,
   createThreadSection,
   deleteQueuedThreadMessage,
@@ -17,7 +15,6 @@ import {
   reorderQueuedThreadMessage,
   setQueuedThreadMessageGroupBoundary,
   setThreadExecutionOverride,
-  upsertProjectExecutionDefaults,
 } from "@bb/db";
 import {
   encodeClientTurnRequestIdNumber,
@@ -31,7 +28,6 @@ import {
   sidebarBootstrapResponseSchema,
   threadSectionMutationResponseSchema,
   threadSectionSchema,
-  threadComposerBootstrapResponseSchema,
   threadConversationOutlineResponseSchema,
   threadQueuedMessageListResponseSchema,
   threadTimelineResponseSchema,
@@ -50,19 +46,14 @@ import {
   waitForQueuedCommand,
   waitForQueuedCommandAfter,
 } from "../helpers/commands.js";
-import {
-  registerHostRpcResponder,
-  registerProviderHostRpcResponder,
-} from "../helpers/host-rpc.js";
+import { registerHostRpcResponder } from "../helpers/host-rpc.js";
 import { readJson } from "../helpers/json.js";
 import { textInput } from "../helpers/prompt-input.js";
 import {
-  seedHost,
   seedQueuedMessage,
   seedEnvironment,
   seedEvent,
   seedHostSession,
-  seedPrimaryHost,
   seedProjectWithSource,
   seedStoredEvent,
   seedThread,
@@ -3223,308 +3214,6 @@ describe("public thread data routes", () => {
     });
   });
 
-  it("loads legacy thread composer bootstrap state", async () => {
-    await withTestHarness(async (harness) => {
-      seedHostSession(harness.deps, {
-        id: "host-composer-default",
-      });
-      const { host, session } = seedHostSession(harness.deps, {
-        id: "host-composer-thread",
-      });
-      seedPrimaryHost(harness.deps, host.id);
-      const providerResponder = registerProviderHostRpcResponder(harness, {
-        hostId: host.id,
-        sessionId: session.id,
-        modelsByProviderId: {
-          codex: {
-            models: [
-              {
-                id: "gpt-5.5",
-                model: "gpt-5.5",
-                displayName: "GPT-5.5",
-                description: "Frontier model",
-                supportedReasoningEfforts: [
-                  {
-                    reasoningEffort: "xhigh",
-                    description: "Extra high",
-                  },
-                ],
-                defaultReasoningEffort: "xhigh",
-                isDefault: true,
-              },
-            ],
-            selectedOnlyModels: [],
-          },
-        },
-      });
-      const { project } = seedProjectWithSource(harness.deps, {
-        hostId: host.id,
-      });
-      const environment = seedEnvironment(harness.deps, {
-        hostId: host.id,
-        projectId: project.id,
-      });
-      const thread = seedThread(harness.deps, {
-        projectId: project.id,
-        environmentId: environment.id,
-      });
-      seedEvent(harness.deps, {
-        threadId: thread.id,
-        environmentId: environment.id,
-        sequence: 1,
-        type: "client/turn/requested",
-        scope: threadScope(),
-        data: {
-          direction: "outbound",
-          requestId: encodeClientTurnRequestIdNumber({ value: 601 }),
-          input: [{ type: "text", text: "Accepted prompt" }],
-          target: { kind: "new-turn" },
-          execution: {
-            model: "gpt-5.5",
-            serviceTier: "default",
-            reasoningLevel: "xhigh",
-            permissionMode: "workspace-write",
-            source: "client/turn/requested",
-          },
-          initiator: "user",
-          senderThreadId: null,
-          request: {
-            method: "turn/start",
-            params: {},
-          },
-          source: "tell",
-        },
-      });
-      createPromptHistoryEntry(harness.deps.db, {
-        projectId: project.id,
-        threadId: thread.id,
-        scope: "thread",
-        requestSequence: 1,
-        input: textInput("Accepted prompt"),
-      });
-      seedQueuedMessage(harness.deps, {
-        threadId: thread.id,
-        content: textInput("Queued message"),
-        model: "gpt-5.5",
-        reasoningLevel: "xhigh",
-        permissionMode: "accept-edits",
-        serviceTier: "default",
-      });
-
-      const response = await harness.app.request(
-        `/api/v1/threads/${thread.id}/composer-bootstrap`,
-      );
-
-      expect(response.status).toBe(200);
-      const bootstrap = threadComposerBootstrapResponseSchema.parse(
-        await readJson(response),
-      );
-      expect(bootstrap.defaultExecutionOptions).toMatchObject({
-        model: "gpt-5.5",
-        reasoningLevel: "xhigh",
-        permissionMode: "accept-edits",
-      });
-      expect(bootstrap.queuedMessages).toHaveLength(1);
-      expect(bootstrap.queuedMessages[0]?.content).toEqual(
-        textInput("Queued message"),
-      );
-      expect(bootstrap.pendingInteractions).toEqual([]);
-      expect(bootstrap.promptHistory.map((entry) => entry.input)).toEqual(
-        expect.arrayContaining([
-          textInput("Accepted prompt"),
-          textInput("Queued message"),
-        ]),
-      );
-      const { executionOptions } = bootstrap;
-      if (executionOptions === null) {
-        throw new Error(
-          "expected resolved executionOptions for an environment-backed thread",
-        );
-      }
-      const codexProvider = executionOptions.providers.find(
-        (provider) => provider.id === "codex",
-      );
-      expect(codexProvider).toMatchObject({
-        id: "codex",
-      });
-      expect(executionOptions.models[0]?.model).toBe("gpt-5.5");
-      expect(
-        providerResponder.requests.map((request) => request.command),
-      ).toEqual([
-        {
-          type: "known_acp_agents.status",
-          agents: [
-            { id: "acp-opencode", executableName: "opencode" },
-            { id: "acp-omp", executableName: "omp" },
-            { id: "acp-grok", executableName: "grok" },
-            { id: "acp-hermes-agent", executableName: "hermes" },
-          ],
-        },
-        {
-          type: "provider.list_models",
-          providerId: "codex",
-          cwd: "/tmp/test-environment",
-        },
-      ]);
-    });
-  });
-
-  it("keeps ACP thread composer defaults when provider discovery is degraded", async () => {
-    await withTestHarness(async (harness) => {
-      const { host, session } = seedHostSession(harness.deps, {
-        id: "host-composer-acp-degraded",
-      });
-      seedPrimaryHost(harness.deps, host.id);
-      const providerResponder = registerHostRpcResponder(harness, {
-        hostId: host.id,
-        sessionId: session.id,
-        handle: (request) => {
-          if (
-            request.command.type === "known_acp_agents.status" ||
-            request.command.type === "provider.list_models"
-          ) {
-            return {
-              ok: false,
-              errorCode: "command_failed",
-              errorMessage: "Runtime shutting down",
-            };
-          }
-          throw new Error(`Unexpected RPC command ${request.command.type}`);
-        },
-      });
-      const { project } = seedProjectWithSource(harness.deps, {
-        hostId: host.id,
-      });
-      upsertProjectExecutionDefaults(harness.deps.db, {
-        projectId: project.id,
-        providerId: "acp-cursor",
-        model: "composer-2.5",
-        reasoningLevel: "medium",
-        permissionMode: "accept-edits",
-        serviceTier: "default",
-      });
-      const environment = seedEnvironment(harness.deps, {
-        hostId: host.id,
-        projectId: project.id,
-      });
-      const thread = seedThread(harness.deps, {
-        projectId: project.id,
-        environmentId: environment.id,
-        providerId: "acp-opencode",
-      });
-      seedThreadRuntimeState(harness.deps, {
-        environmentId: environment.id,
-        inputText: "New review comments on the PR",
-        model: "zai-coding-plan/glm-5.2",
-        permissionMode: "accept-edits",
-        providerThreadId: "ses_opencode",
-        reasoningLevel: "medium",
-        threadId: thread.id,
-      });
-
-      const response = await harness.app.request(
-        `/api/v1/threads/${thread.id}/composer-bootstrap`,
-      );
-
-      expect(response.status).toBe(200);
-      const bootstrap = threadComposerBootstrapResponseSchema.parse(
-        await readJson(response),
-      );
-      expect(bootstrap.defaultExecutionOptions).toMatchObject({
-        model: "zai-coding-plan/glm-5.2",
-        permissionMode: "accept-edits",
-        reasoningLevel: "medium",
-      });
-      const { executionOptions } = bootstrap;
-      if (executionOptions === null) {
-        throw new Error(
-          "expected degraded executionOptions for an environment-backed ACP thread",
-        );
-      }
-      expect(
-        executionOptions.providers.some(
-          (provider) => provider.id === "acp-opencode",
-        ),
-      ).toBe(true);
-      expect(executionOptions.modelLoadError).toMatchObject({
-        providerId: "acp-opencode",
-      });
-      expect(
-        providerResponder.requests.map((request) => request.command.type),
-      ).toEqual(["known_acp_agents.status", "provider.list_models"]);
-      expect(providerResponder.requests[1]?.command).toMatchObject({
-        type: "provider.list_models",
-        providerId: "acp-opencode",
-      });
-    });
-  });
-
-  it("returns null composer defaults for stale project execution defaults", async () => {
-    await withTestHarness(async (harness) => {
-      const { host } = seedHostSession(harness.deps, {
-        id: "host-composer-stale-project-defaults",
-      });
-      const { project } = seedProjectWithSource(harness.deps, {
-        hostId: host.id,
-      });
-      upsertProjectExecutionDefaults(harness.deps.db, {
-        projectId: project.id,
-        providerId: "codex",
-        model: "gpt-5.5",
-        // ultracode is Claude-only; stale for Codex project defaults.
-        reasoningLevel: "ultracode",
-        permissionMode: "full",
-        serviceTier: "default",
-      });
-      const thread = seedThread(harness.deps, {
-        projectId: project.id,
-        environmentId: null,
-        providerId: "codex",
-      });
-
-      const response = await harness.app.request(
-        `/api/v1/threads/${thread.id}/composer-bootstrap`,
-      );
-
-      expect(response.status).toBe(200);
-      const bootstrap = threadComposerBootstrapResponseSchema.parse(
-        await readJson(response),
-      );
-      expect(bootstrap.defaultExecutionOptions).toBeNull();
-      expect(bootstrap.executionOptions).toBeNull();
-    });
-  });
-
-  it("returns null composer execution options for archived threads on offline hosts", async () => {
-    await withTestHarness(async (harness) => {
-      const host = seedHost(harness.deps, {
-        id: "host-composer-archived-offline",
-      });
-      const { project } = seedProjectWithSource(harness.deps, {
-        hostId: host.id,
-      });
-      const environment = seedEnvironment(harness.deps, {
-        hostId: host.id,
-        projectId: project.id,
-      });
-      const thread = seedThread(harness.deps, {
-        projectId: project.id,
-        environmentId: environment.id,
-      });
-      archiveThread(harness.db, harness.hub, thread.id);
-
-      const response = await harness.app.request(
-        `/api/v1/threads/${thread.id}/composer-bootstrap`,
-      );
-
-      expect(response.status).toBe(200);
-      const bootstrap = threadComposerBootstrapResponseSchema.parse(
-        await readJson(response),
-      );
-      expect(bootstrap.executionOptions).toBeNull();
-    });
-  });
-
   it("inherits thread default execution options when queued message overrides are omitted", async () => {
     await withTestHarness(async (harness) => {
       const { environment, thread } = seedThreadFixture(harness);
@@ -4984,6 +4673,69 @@ describe("public thread data routes", () => {
         code: "file_too_large",
         message: "File exceeds limit",
         retryable: false,
+      });
+    });
+  });
+
+  it("filters and reverse-pages thread events", async () => {
+    await withTestHarness(async (harness) => {
+      const { environment, thread } = seedThreadFixture(harness);
+
+      seedEvent(harness.deps, {
+        threadId: thread.id,
+        environmentId: environment.id,
+        sequence: 1,
+        type: "system/error",
+        scope: threadScope(),
+        data: { message: "first" },
+      });
+      seedEvent(harness.deps, {
+        threadId: thread.id,
+        environmentId: environment.id,
+        providerThreadId: "provider-thread-1",
+        scope: turnScope("turn-1"),
+        sequence: 2,
+        type: "item/completed",
+        data: { item: { type: "agentMessage", id: "msg-1", text: "Reply" } },
+      });
+      seedEvent(harness.deps, {
+        threadId: thread.id,
+        environmentId: environment.id,
+        sequence: 3,
+        type: "system/error",
+        scope: threadScope(),
+        data: { message: "second" },
+      });
+      seedEvent(harness.deps, {
+        threadId: thread.id,
+        environmentId: environment.id,
+        sequence: 4,
+        type: "system/manager/user_message",
+        scope: threadScope(),
+        data: { text: "excluded" },
+      });
+
+      const response = await harness.app.request(
+        `/api/v1/threads/${thread.id}/events?types=system%2Ferror%2Citem%2Fcompleted&order=desc&beforeSeq=4&limit=2`,
+      );
+      expect(response.status).toBe(200);
+      await expect(readJson(response)).resolves.toMatchObject([
+        { seq: 3, type: "system/error" },
+        { seq: 2, type: "item/completed" },
+      ]);
+    });
+  });
+
+  it("rejects invalid thread event list filters", async () => {
+    await withTestHarness(async (harness) => {
+      const { thread } = seedThreadFixture(harness);
+      const response = await harness.app.request(
+        `/api/v1/threads/${thread.id}/events?types=not-a-real-event`,
+      );
+      expect(response.status).toBe(400);
+      await expect(readJson(response)).resolves.toMatchObject({
+        code: "invalid_request",
+        message: "Invalid thread event types",
       });
     });
   });

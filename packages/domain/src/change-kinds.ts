@@ -9,6 +9,7 @@ export const THREAD_CHANGE_KINDS = [
   "thread-created",
   "thread-deleted",
   "events-appended",
+  "history-rewritten",
   "interactions-changed",
   "status-changed",
   "title-changed",
@@ -54,6 +55,7 @@ export type HostChangeKind = (typeof HOST_CHANGE_KINDS)[number];
 export const SYSTEM_CHANGE_KINDS = [
   "config-changed",
   "plugins-changed",
+  "provider-registrations-changed",
 ] as const;
 export type SystemChangeKind = (typeof SYSTEM_CHANGE_KINDS)[number];
 

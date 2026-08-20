@@ -78,7 +78,7 @@ function makeUserRow(
     senderThreadId: null,
     systemMessageKind: "unlabeled",
     systemMessageSubject: null,
-    turnRequest: { kind: "message", status: "accepted" },
+    turnRequest: { isGrouped: false, kind: "message", status: "accepted" },
   };
 }
 
@@ -92,6 +92,7 @@ describe("mergeLatestTimelineRows", () => {
 
     const merged = mergeLatestTimelineRows({
       latestRows: [serverRow],
+      latestWindowStartSequence: 0,
       loadedRows: [optimistic],
     });
 
@@ -106,6 +107,7 @@ describe("mergeLatestTimelineRows", () => {
 
     const merged = mergeLatestTimelineRows({
       latestRows: [newer],
+      latestWindowStartSequence: 5,
       loadedRows: [older],
     });
 
@@ -119,6 +121,7 @@ describe("mergeLatestTimelineRows", () => {
 
     const merged = mergeLatestTimelineRows({
       latestRows: [optimistic],
+      latestWindowStartSequence: 0,
       loadedRows: [optimistic],
     });
 

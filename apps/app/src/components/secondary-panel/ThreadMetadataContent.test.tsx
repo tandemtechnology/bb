@@ -26,7 +26,6 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     originKind: null,
     originPluginId: null,
     visibility: "visible",
-    childOrigin: null,
     archivedAt: null,
     pinnedAt: null,
     deletedAt: null,
@@ -143,6 +142,7 @@ describe("ParentSelectorRow", () => {
         <ParentSelectorRow
           thread={makeThread({ environmentId: null })}
           projectId="proj_test"
+          parentThreadProjectId={null}
           parentThreadDisplayName={null}
           parentThreads={[]}
           canAssignToParent
@@ -174,6 +174,7 @@ describe("ParentSelectorRow", () => {
         <ParentSelectorRow
           thread={makeThread({ environmentId: null })}
           projectId="proj_test"
+          parentThreadProjectId={null}
           parentThreadDisplayName={null}
           parentThreads={candidates}
           canAssignToParent

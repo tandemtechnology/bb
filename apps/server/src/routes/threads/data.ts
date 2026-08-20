@@ -1,8 +1,4 @@
 import path from "node:path";
-import {
-  getBuiltInAgentProviderInfo,
-  isAgentProviderId,
-} from "@bb/agent-providers";
 import { formatCustomAcpAgentProviderId } from "@bb/config/bb-app-managed-config";
 import {
   getAppSettings,
@@ -10,12 +6,15 @@ import {
   listQueuedThreadMessages,
 } from "@bb/db";
 import type { Hono } from "hono";
-import { PROMPT_HISTORY_ENTRY_LIMIT, threadEventTypeSchema } from "@bb/domain";
+import {
+  PROMPT_HISTORY_ENTRY_LIMIT,
+  threadEventTypeSchema,
+  type ThreadEventType,
+} from "@bb/domain";
 import {
   publicApiRoutes,
   typedRoutes,
   type PublicApiSchema,
-  type ThreadComposerBootstrapResponse,
   type ThreadConversationOutlineResponse,
   type ThreadTimelineQuery,
 } from "@bb/server-contract";
@@ -69,7 +68,6 @@ import {
   getLastThreadOutput,
   listThreadEventRows,
 } from "../../services/threads/thread-data.js";
-import { resolveSystemExecutionOptions } from "../../services/system/execution-options.js";
 import { findKnownAcpAgentForProviderId } from "../../services/system/known-acp-agents.js";
 import { listThreadPromptHistory } from "../../services/prompt-history.js";
 import { tryResolveExistingThreadExecutionPlan } from "../../services/threads/thread-execution-plan.js";
@@ -78,12 +76,13 @@ import {
   parseInteger,
   parseOptionalInteger,
 } from "../../services/lib/validation.js";
+import { resolveProviderPlanCommand } from "../../services/providers/provider-plan-command.js";
 import { parsePathKindInclusion } from "../path-list-inclusion.js";
 import { parseFileListLimit } from "../file-list-query.js";
 import { parseSafeRelativeRoutePath } from "../relative-route-path.js";
 
 function resolveThreadProviderDisplayName(
-  deps: Pick<AppDeps, "config">,
+  deps: Pick<AppDeps, "config" | "providerRegistry">,
   providerId: string,
 ): string | undefined {
   const customAcpAgent = deps.config.customAcpAgents.find(
@@ -96,60 +95,7 @@ function resolveThreadProviderDisplayName(
   if (knownAcpAgent) {
     return knownAcpAgent.displayName;
   }
-  return isAgentProviderId(providerId)
-    ? getBuiltInAgentProviderInfo(providerId).displayName
-    : undefined;
-}
-
-interface ThreadComposerExecutionOptionsSource {
-  archivedAt: number | null;
-  environmentId: string | null;
-}
-
-function shouldResolveThreadComposerExecutionOptions(
-  thread: ThreadComposerExecutionOptionsSource,
-): boolean {
-  return thread.archivedAt === null && thread.environmentId !== null;
-}
-
-async function buildThreadComposerBootstrapResponse(
-  deps: AppDeps,
-  threadId: string,
-): Promise<ThreadComposerBootstrapResponse> {
-  const thread = requirePublicThread(deps.db, threadId);
-  const defaultExecutionOptions =
-    (
-      await tryResolveExistingThreadExecutionPlan(deps, {
-        executionSource: "client/turn/requested",
-        input: {},
-        threadId,
-      })
-    )?.defaultView ?? null;
-  const composerEnvironmentId = shouldResolveThreadComposerExecutionOptions(
-    thread,
-  )
-    ? thread.environmentId
-    : null;
-  const executionOptions = composerEnvironmentId
-    ? await resolveSystemExecutionOptions(deps, {
-        environmentId: composerEnvironmentId,
-        providerId: thread.providerId,
-      })
-    : null;
-
-  return {
-    defaultExecutionOptions,
-    queuedMessages: listQueuedThreadMessages(deps.db, threadId).map(
-      toThreadQueuedMessage,
-    ),
-    executionOptions,
-    pendingInteractions:
-      deps.pendingInteractions.listPendingThreadInteractions(threadId),
-    promptHistory: listThreadPromptHistory(deps, {
-      threadId,
-      limit: PROMPT_HISTORY_ENTRY_LIMIT,
-    }),
-  };
+  return deps.providerRegistry.get(providerId)?.info.displayName;
 }
 
 function validateFilePath(filePath: string): void {
@@ -176,6 +122,19 @@ const RAW_FILE_HTML_CONTENT_TYPE = "text/html; charset=utf-8";
 const RAW_FILE_CONTENT_TYPE_OPTIONS = "nosniff";
 const HTML_PREVIEW_MAX_BYTES = 5 * 1024 * 1024;
 const GENERIC_HTML_PREVIEW_CSP = "sandbox allow-scripts";
+
+function parseThreadEventTypes(
+  value: string | undefined,
+): ThreadEventType[] | undefined {
+  if (value === undefined) return undefined;
+  return value.split(",").map((type) => {
+    const parsed = threadEventTypeSchema.safeParse(type);
+    if (!parsed.success) {
+      throw new ApiError(400, "invalid_request", "Invalid event type");
+    }
+    return parsed.data;
+  });
+}
 
 function parseThreadTimelineSegmentLimit(
   defaultLimit: number,
@@ -413,6 +372,10 @@ export function registerThreadDataRoutes(app: Hono, deps: AppDeps): void {
             maxSeq,
             page,
             providerDisplayName,
+            planCommand: resolveProviderPlanCommand(
+              deps.providerRegistry,
+              thread.providerId,
+            ),
             summaryOnly,
           },
         );
@@ -504,12 +467,6 @@ export function registerThreadDataRoutes(app: Hono, deps: AppDeps): void {
     });
   });
 
-  get(routes.composerBootstrap, async (context) =>
-    context.json(
-      await buildThreadComposerBootstrapResponse(deps, context.req.param("id")),
-    ),
-  );
-
   get(routes.queuedMessages, (context) => {
     const threadId = context.req.param("id");
     requirePublicThread(deps.db, threadId);
@@ -542,7 +499,10 @@ export function registerThreadDataRoutes(app: Hono, deps: AppDeps): void {
       listThreadEventRows(deps.db, {
         threadId: context.req.param("id"),
         afterSeq: parseOptionalInteger(query.afterSeq, "afterSeq"),
+        beforeSeq: parseOptionalInteger(query.beforeSeq, "beforeSeq"),
         limit: parseOptionalInteger(query.limit, "limit") ?? 100,
+        order: query.order,
+        types: parseThreadEventTypes(query.types),
       }),
     );
   });

@@ -33,6 +33,7 @@ import { setPluginThreadEventEmitter } from "./services/plugins/plugin-thread-ev
 import { registerInternalEventRoutes } from "./internal/events.js";
 import { registerInternalHostRoutes } from "./internal/hosts.js";
 import { registerInternalInteractiveRequestRoutes } from "./internal/interactive-requests.js";
+import { registerInternalPluginHostArtifactRoutes } from "./internal/plugin-host-artifacts.js";
 import { registerInternalSessionRoutes } from "./internal/session.js";
 import { registerInternalSkillRoutes } from "./internal/skills.js";
 import { registerInternalToolCallRoutes } from "./internal/tool-calls.js";
@@ -44,6 +45,7 @@ import {
   captureTrustedRemoteAddress,
   resolveRequestAppSurface,
 } from "./request-context.js";
+import { runEventLoopWork } from "./services/system/event-loop-work.js";
 import { runWithTelemetryAppSurface } from "./services/system/telemetry.js";
 import {
   onClientSocketClose,
@@ -71,8 +73,20 @@ import {
   createPluginCatalogService,
   type PluginCatalogService,
 } from "./services/plugin-catalog/plugin-catalog-service.js";
+import type { ProviderRegistryService } from "./services/providers/provider-registry.js";
 import { callHostRetryableOnlineRpc } from "./services/hosts/online-rpc.js";
 import { browserRequestProblem } from "./browser-request-guard.js";
+import {
+  callPluginHostRpc,
+  disposePluginHostWorkers,
+} from "./services/plugins/plugin-host-rpc.js";
+
+/**
+ * `/api/v1/plugins/<id>/http/...` — the plugin-owned wire, whose auth mode is
+ * declared per route by the plugin itself.
+ */
+const PLUGIN_WIRE_HTTP_PATH = /^\/api\/v1\/plugins\/[^/]+\/http(?:\/|$)/u;
+import { rankAcceptedAssetEncodings } from "./asset-content-encoding.js";
 
 export type CloseWebSockets = () => Promise<void>;
 type NodeWebSocketServer = ReturnType<typeof createNodeWebSocket>["wss"];
@@ -84,6 +98,7 @@ export interface ServerApp {
   injectWebSocket: ReturnType<typeof createNodeWebSocket>["injectWebSocket"];
   pluginService: PluginService;
   pluginCatalogService: PluginCatalogService;
+  providerRegistry: ProviderRegistryService;
 }
 
 interface CloseWebSocketServerArgs {
@@ -133,6 +148,8 @@ const INSTALL_MACHINE_SCRIPT_PATH = fileURLToPath(
 );
 const THREAD_EVENT_WAIT_PATH_PATTERN =
   /^\/api\/v1\/threads\/[^/]+\/events\/wait$/u;
+const PLUGIN_APP_ASSET_PATH_PATTERN =
+  /^\/api\/v1\/plugins\/[^/]+\/assets\/app\.(?:js|css)$/u;
 const PRECOMPRESSED_STATIC_FILES = [
   { encoding: "br", extension: ".br" },
   { encoding: "gzip", extension: ".gz" },
@@ -170,36 +187,6 @@ function createStaticResponseHeaders(args: StaticResponseHeadersArgs): Headers {
   return headers;
 }
 
-function acceptedEncodingQuality(
-  acceptEncodingHeader: string | undefined,
-  encoding: string,
-): number {
-  if (acceptEncodingHeader === undefined) {
-    return 0;
-  }
-  let wildcardQuality = 0;
-  for (const part of acceptEncodingHeader.split(",")) {
-    const [rawName, ...rawParams] = part.trim().split(";");
-    const name = rawName?.trim().toLowerCase();
-    const qParam = rawParams
-      .map((param) => param.trim().toLowerCase())
-      .find((param) => param.startsWith("q="));
-    const quality =
-      qParam === undefined
-        ? 1
-        : Number.isNaN(Number(qParam.slice(2)))
-          ? 1
-          : Number(qParam.slice(2));
-    if (name === encoding) {
-      return quality;
-    }
-    if (name === "*") {
-      wildcardQuality = quality;
-    }
-  }
-  return wildcardQuality;
-}
-
 function canServePrecompressedStaticFile(contentType: string): boolean {
   return (
     contentType.startsWith("text/") ||
@@ -225,20 +212,10 @@ async function findPrecompressedStaticFile(args: {
     return null;
   }
 
-  const candidates = PRECOMPRESSED_STATIC_FILES.map((candidate, index) => ({
-    ...candidate,
-    index,
-    quality: acceptedEncodingQuality(
-      args.acceptEncodingHeader,
-      candidate.encoding,
-    ),
-  }))
-    .filter((candidate) => candidate.quality > 0)
-    .sort(
-      (left, right) => right.quality - left.quality || left.index - right.index,
-    );
-
-  for (const candidate of candidates) {
+  for (const candidate of rankAcceptedAssetEncodings(
+    args.acceptEncodingHeader,
+    PRECOMPRESSED_STATIC_FILES,
+  )) {
     const encodedFilePath = `${args.filePath}${candidate.extension}`;
     try {
       const encodedStat = await stat(encodedFilePath);
@@ -320,6 +297,13 @@ export function createApp(
     );
     return runWithTelemetryAppSurface(appSurface, next);
   });
+  app.use("*", async (context, next) => {
+    const path = context.req.path;
+    if (!path.startsWith("/api/v1/") && !path.startsWith("/internal/")) {
+      return next();
+    }
+    return runEventLoopWork(`${context.req.method} ${path}`, next);
+  });
   app.use(
     "*",
     cors({
@@ -333,7 +317,16 @@ export function createApp(
       },
     }),
   );
-  app.use("*", compress());
+  const compressResponse = compress();
+  app.use("*", (context, next) => {
+    // Plugin JS/CSS negotiates Brotli and gzip itself and caches immutable
+    // variants. Letting this outer middleware transform an identity fallback
+    // would also ignore explicit q=0 values in Hono's current parser.
+    if (PLUGIN_APP_ASSET_PATH_PATTERN.test(context.req.path)) {
+      return next();
+    }
+    return compressResponse(context, next);
+  });
   app.onError((error) => errorToResponse(error, deps.logger));
   app.get("/health", (context) => context.json({ ok: true }));
   app.get("/install.sh", async (context) => {
@@ -418,10 +411,13 @@ export function createApp(
     db: deps.db,
     hub: deps.hub,
     logger: deps.logger,
+    telemetry: deps.telemetry,
     pendingInteractions: deps.pendingInteractions,
     dataDir: deps.config.dataDir,
     appVersion: deps.config.appVersion,
     sharedPorts: deps.sharedPorts,
+    providerRegistry: deps.providerRegistry,
+    pluginHostArtifacts: deps.pluginHostArtifacts,
     ensureSharedPortTunnel: (hostId) =>
       deps.sharedPorts.ensureTunnelIdentity(hostId, () =>
         callHostRetryableOnlineRpc(deps, {
@@ -430,6 +426,8 @@ export function createApp(
           timeoutMs: 30_000,
         }),
       ),
+    callPluginHost: (args) => callPluginHostRpc(deps, args),
+    disposePluginHost: (args) => disposePluginHostWorkers(deps, args),
     watchBuiltinPluginSources:
       process.env.BB_MANAGED_DEV_BUILTIN_PLUGIN_HOT_RELOAD === "1",
   });
@@ -438,10 +436,40 @@ export function createApp(
   // Bridge runtime-config assembly to plugin skills + context (§4.4).
   setPluginAgentContributions(pluginService);
   const publicApi = new Hono();
+  // CORS decides whether a browser may *read* a response; it does not stop the
+  // request being sent and acted on. A `no-cors` POST with a simple content
+  // type skips the preflight entirely, and the typed route parser reads the
+  // body with `c.req.json()` regardless of content type — so a page on any
+  // origin could drive this API blind. Reject a foreign browser origin here
+  // instead. `requireJsonForMutation` is deliberately NOT set: it answers 415
+  // to any mutation without `application/json`, which would break every
+  // existing `curl -d` caller. The origin check alone stops browser CSRF,
+  // because a browser always sends `Origin` on a cross-origin mutation.
+  // Non-browser callers (curl, the `bb` CLI, the SDK) send no `Origin` and pass
+  // through untouched.
+  publicApi.use("*", async (context, next) => {
+    // A plugin's own HTTP routes declare their auth mode (`local` | `token` |
+    // `none`). `none` is deliberately reachable from any origin, and `token`
+    // authenticates with a secret rather than an origin, so this blanket check
+    // must not pre-empt the per-route one `registerPluginRoutes` applies.
+    if (PLUGIN_WIRE_HTTP_PATH.test(context.req.path)) {
+      return next();
+    }
+    const problem = browserRequestProblem(context, deps);
+    if (problem !== null) {
+      throw new ApiError(problem.status, "forbidden_origin", problem.error);
+    }
+    return next();
+  });
   const pluginCatalogService = createPluginCatalogService({
     db: deps.db,
     appVersion: deps.config.appVersion,
+    marketplaceUrl: deps.config.marketplaceUrl,
+    dataDir: deps.config.dataDir,
     plugins: pluginService,
+    // The store's installed/compatible flags ride the plugin-list broadcast,
+    // so a refreshed catalog reaches open windows without polling.
+    notifyCatalogChanged: () => deps.hub.notifySystem(["plugins-changed"]),
     warn: (message) => deps.logger.warn(message),
   });
   registerProjectRoutes(publicApi, deps);
@@ -462,8 +490,9 @@ export function createApp(
 
   const internalApi = new Hono();
   registerInternalHostRoutes(internalApi, deps);
-  registerInternalSessionRoutes(internalApi, deps);
+  registerInternalSessionRoutes(internalApi, deps, pluginService);
   registerInternalSkillRoutes(internalApi, deps);
+  registerInternalPluginHostArtifactRoutes(internalApi, deps);
   registerInternalEventRoutes(internalApi, deps);
   registerInternalToolCallRoutes(internalApi, deps);
   registerInternalInteractiveRequestRoutes(internalApi, deps);
@@ -552,12 +581,16 @@ export function createApp(
             socket,
           }),
         onMessage: (event, socket) =>
-          onDaemonSocketMessage(deps, {
-            hostId: websocketContext.hostId,
-            raw: event.data,
-            sessionId: websocketContext.sessionId,
-            socket,
-          }),
+          onDaemonSocketMessage(
+            deps,
+            {
+              hostId: websocketContext.hostId,
+              raw: event.data,
+              sessionId: websocketContext.sessionId,
+              socket,
+            },
+            pluginService,
+          ),
         onClose: () => onDaemonSocketClose(deps, websocketContext.sessionId),
       };
     }),
@@ -650,5 +683,6 @@ export function createApp(
     injectWebSocket,
     pluginService,
     pluginCatalogService,
+    providerRegistry: deps.providerRegistry,
   };
 }

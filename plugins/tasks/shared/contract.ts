@@ -1,4 +1,4 @@
-import { defineRpcContract } from "@bb/plugin-sdk";
+import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import {
   TASK_SORTS,
@@ -48,6 +48,7 @@ const presetReasoningLevelSchema = z.enum([
   "high",
   "xhigh",
   "max",
+  "ultra",
 ]);
 export const PRESET_PERMISSION_MODES = [
   "accept-edits",
@@ -691,7 +692,7 @@ export const tasksRpcContract = defineRpcContract({
             .object({
               id: z.string(),
               name: z.string(),
-              supportedPermissionModes: z.array(presetPermissionModeSchema),
+              permissionModes: z.array(presetPermissionModeSchema),
             })
             .strict(),
         ),
@@ -758,6 +759,12 @@ export const tasksRpcContract = defineRpcContract({
             .strict(),
         ),
       })
+      .strict(),
+  },
+  sidebarOpenTaskCount: {
+    input: z.null(),
+    output: z
+      .object({ openTaskCount: z.number().int().nonnegative() })
       .strict(),
   },
   sidebarSummary: {

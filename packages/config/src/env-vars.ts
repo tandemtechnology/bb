@@ -10,6 +10,7 @@ import {
   type AppSurface,
 } from "./app-surface.js";
 import {
+  validateInferenceFallbackModel,
   validateInferenceModel,
   validateTranscriptionModel,
 } from "./inference-model.js";
@@ -132,6 +133,10 @@ function parseInferenceModelValue(args: EnvVarParseArgs): string {
   return validateInferenceModel(args.value);
 }
 
+function parseInferenceFallbackModelValue(args: EnvVarParseArgs): string {
+  return validateInferenceFallbackModel(args.value);
+}
+
 function parseTranscriptionModelValue(args: EnvVarParseArgs): string {
   return validateTranscriptionModel(args.value);
 }
@@ -208,10 +213,24 @@ export const BB_EXTERNAL_URL_ENV = defineEnvVar<string>({
   parse: parseOptionalUrlEnvValue,
 });
 
+export const BB_MARKETPLACE_URL_ENV = defineEnvVar<string>({
+  description:
+    "Manifest URL of the reserved bb-community plugin marketplace, which lists as BB Community. Point it at a local file server to test catalog refreshes.",
+  name: "BB_MARKETPLACE_URL",
+  parse: parseOptionalUrlEnvValue,
+});
+
 export const BB_INFERENCE_ENV = defineEnvVar<string>({
   description: "Inference model used for server-side completions",
   name: "BB_INFERENCE",
   parse: parseInferenceModelValue,
+});
+
+export const BB_INFERENCE_FALLBACK_ENV = defineEnvVar<string>({
+  description:
+    "Fallback inference model used after a transient server-side completion failure",
+  name: "BB_INFERENCE_FALLBACK",
+  parse: parseInferenceFallbackModelValue,
 });
 
 export const BB_TRANSCRIPTION_ENV = defineEnvVar<string>({
@@ -236,7 +255,7 @@ export const BB_POSTHOG_API_KEY_ENV = defineEnvVar<string>({
 
 export const BB_TELEMETRY_ENV = defineEnvVar<boolean>({
   description:
-    "Anonymous usage telemetry (app starts, thread creation counts, and user message counts). Set to false to opt out.",
+    "Anonymous usage telemetry (app starts, thread creation counts, user message counts, and plugin installs). Set to false to opt out.",
   name: "BB_TELEMETRY",
   parse: parseBooleanEnvValue,
 });
@@ -272,13 +291,6 @@ export const BB_CLI_DIR_ENV = defineEnvVar<string | undefined>({
   description:
     "Directory containing the bb CLI executable to inject into runtime shells",
   name: "BB_CLI_DIR",
-  parse: parseOptionalTrimmedStringEnvValue,
-});
-
-export const BB_CLI_ENV = defineEnvVar<string | undefined>({
-  description:
-    "Absolute path to the daemon-managed bb CLI (injected into agent shells; official entrypoints re-exec here when set)",
-  name: "BB_CLI",
   parse: parseOptionalTrimmedStringEnvValue,
 });
 
@@ -373,7 +385,11 @@ export const DEFAULT_BB_POSTHOG_API_KEY =
 // silently.
 export const DEFAULT_BB_TELEMETRY = false;
 export const DEFAULT_BB_DEV_APP_HOST = "";
+/** Published by the registry repository through the getbb.app worker's R2 route. */
+export const DEFAULT_BB_MARKETPLACE_URL =
+  "https://getbb.app/marketplace/v1/marketplace.json";
 export const DEFAULT_BB_INFERENCE = DEFAULTS.inferenceModel;
+export const DEFAULT_BB_INFERENCE_FALLBACK = DEFAULTS.inferenceFallbackModel;
 export const DEFAULT_BB_TRANSCRIPTION = DEFAULTS.transcriptionModel;
 export const DEFAULT_BB_FF_PLACEHOLDER = defaultFeatureFlags.placeholder;
 export const DEFAULT_BB_FF_TIMELINE_WINDOW_EVENT_BUDGET =

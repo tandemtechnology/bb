@@ -124,6 +124,7 @@ const representativeWorkspaceStatus = makeWorkspaceStatus({
     state: "dirty_and_committed_unmerged",
     insertions: 41,
     deletions: 12,
+    lineStatsComplete: true,
     files: [
       {
         path: "apps/app/src/components/secondary-panel/ThreadSecondaryPanel.stories.tsx",
@@ -148,6 +149,7 @@ const representativeWorkspaceStatus = makeWorkspaceStatus({
     commits: INFO_COMMITS,
     insertions: 86,
     deletions: 19,
+    lineStatsComplete: true,
     files: [
       {
         path: "apps/app/src/components/secondary-panel/ThreadSecondaryPanel.tsx",
@@ -211,7 +213,7 @@ function ShellRow({
           <ThreadSecondaryPanel
             activeTab={createStoryFixedPanelTab(panel)}
             canUseGitUi={canUseGitUi}
-            defaultMergeBaseBranch="main"
+            requestedMergeBaseBranch="main"
             environmentId={undefined}
             isOpen
             metadataContent={<RepresentativeInfoContent />}
@@ -332,7 +334,7 @@ function FileTabsShellInner({
       <ThreadSecondaryPanel
         activeTab={activeTab}
         canUseGitUi
-        defaultMergeBaseBranch="main"
+        requestedMergeBaseBranch="main"
         environmentId={undefined}
         isOpen
         metadataContent={<RepresentativeInfoContent />}
@@ -439,7 +441,7 @@ function TerminalTabsShellInner({
       <ThreadSecondaryPanel
         activeTab={activeTab}
         canUseGitUi
-        defaultMergeBaseBranch="main"
+        requestedMergeBaseBranch="main"
         environmentId={undefined}
         isOpen
         metadataContent={<RepresentativeInfoContent />}

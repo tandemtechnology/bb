@@ -3,21 +3,30 @@ import type {
   ClientTurnRequestId,
   DynamicTool,
   InstructionMode,
-  PendingInteractionPayload,
-  PendingInteractionResolution,
   PromptInput,
   ClaudeCodeMockCliTrafficConfig,
   ProviderCapabilities,
   ReasoningLevel,
   RuntimePermissionPolicy,
+  RuntimeThreadExecutionOptions,
   ServiceTier,
   ThreadEvent,
 } from "@bb/domain";
 import type {
   ProviderInboundRequest,
   ProviderRuntimeEvent,
-} from "./runtime-json-rpc.js";
-import type { AgentRuntimeSkillRoot } from "./types.js";
+  BuildInteractiveResponseArgs,
+  DecodedInteractiveRequest,
+  DecodedToolCallRequest,
+  PreparedProviderCommandDispatch,
+  ProviderCommandPlan,
+  ProviderInteractiveResponse,
+  ProviderPostInitializeRequest,
+} from "@bb/provider-bridge-protocol/bridge-kit";
+import type {
+  AgentRuntimeBridgeLaunch,
+  AgentRuntimeSkillRoot,
+} from "./types.js";
 import type { HostDaemonAcpLaunchSpec } from "@bb/host-daemon-contract";
 
 export interface ProviderTranslationContext {
@@ -33,76 +42,21 @@ export interface ProviderAcceptedCommandTranslationArgs {
 export interface ProviderAdapterFactoryOptions {
   additionalWorkspaceWriteRoots: readonly string[];
   acpLaunchSpec?: HostDaemonAcpLaunchSpec;
+  /**
+   * A plugin-delivered bridge artifact resolved to a verified local path by
+   * the host daemon. Routes prefix-matched non-first-party providers onto the
+   * generic bridge-protocol adapter running that artifact.
+   */
+  bridgeLaunch?: AgentRuntimeBridgeLaunch;
   bridgeBundleDir?: string;
   bridgeNodeEnv?: Record<string, string>;
   bridgeNodeExecutablePath?: string;
-  turnIdPrefix?: string;
 }
 
 export type ProviderAdapterFactory = (
   providerId: string,
   options: ProviderAdapterFactoryOptions,
 ) => ProviderAdapter;
-
-export interface ProviderRequestCommandPlan {
-  kind: "request";
-  method: string;
-  params?: object;
-}
-
-export interface ProviderNoopCommandPlan {
-  kind: "noop";
-  method?: never;
-  params?: never;
-  reason: string;
-}
-
-export type ProviderCommandPlan =
-  | ProviderRequestCommandPlan
-  | ProviderNoopCommandPlan;
-
-export interface ProviderPostInitializeRequest {
-  plan: ProviderRequestCommandPlan;
-  required: boolean;
-  onResult(result: unknown): void;
-}
-
-export type ProviderInteractiveResponse =
-  | boolean
-  | number
-  | string
-  | null
-  | ProviderInteractiveResponse[]
-  | { [key: string]: ProviderInteractiveResponse | undefined };
-
-export interface DecodedToolCallRequest {
-  requestId: string | number;
-  providerThreadId: string;
-  /**
-   * Non-empty BB turn id when known. Use null as the canonical unresolved
-   * value so the runtime can resolve from the active turn; empty strings are
-   * malformed adapter output.
-   */
-  turnId: string | null;
-  callId: string;
-  tool: string;
-  arguments?: unknown;
-  threadId?: string;
-}
-
-export interface DecodedInteractiveRequest {
-  requestId: string | number;
-  method: string;
-  providerThreadId: string;
-  /**
-   * Non-empty BB turn id when known. Use null as the canonical unresolved
-   * value so the runtime can resolve from the active turn; empty strings are
-   * malformed adapter output.
-   */
-  turnId: string | null;
-  payload: PendingInteractionPayload;
-  threadId?: string;
-}
 
 // ---------------------------------------------------------------------------
 // AdapterCommand — what the runtime asks the adapter to build
@@ -165,6 +119,7 @@ export type AdapterCommand =
       threadId: string;
       cwd: string;
       sourceProviderThreadId: string;
+      sourceProviderCheckpointId?: string;
       options: ProviderExecutionContext;
       dynamicTools?: DynamicTool[];
       disallowedTools?: readonly string[];
@@ -199,6 +154,11 @@ export type AdapterCommand =
        * means idle/no-active-turn stop and should not invalidate the session.
        */
       activeTurnId: string | null;
+    }
+  | {
+      type: "thread/discard";
+      threadId: string;
+      providerThreadId: string;
     }
   | {
       type: "thread/goal/clear";
@@ -241,14 +201,17 @@ export function flattenPromptInputGroups(
   );
 }
 
-export interface PreparedProviderCommandDispatch {
-  rollback(): void;
-}
-
 export function noPreparedProviderCommandDispatch(
   _command: TurnStartAdapterCommand,
 ): null {
   return null;
+}
+
+export type ProviderExecutionSettingsChange = "unchanged" | "live" | "session";
+
+export interface ClassifyProviderExecutionSettingsChangeArgs {
+  current: RuntimeThreadExecutionOptions;
+  next: RuntimeThreadExecutionOptions;
 }
 
 // ---------------------------------------------------------------------------
@@ -259,7 +222,41 @@ export interface ProviderAdapter {
   id: string;
   displayName: string;
   capabilities: ProviderCapabilities;
+  /**
+   * Selects where approval escalation is enforced. `runtime` adapters emit
+   * every approval request and rely on the runtime's current thread policy.
+   * `provider` adapters enforce the policy before forwarding a request, so a
+   * forwarded approval is already known to require user input and must not be
+   * reclassified against mutable thread settings.
+   */
+  approvalEnforcedBy: "runtime" | "provider";
+  /**
+   * Normalizes provider-specific execution options before validation,
+   * comparison, persistence, and command construction. Providers may use this
+   * to collapse accepted no-op values onto their effective setting.
+   */
+  normalizeExecutionOptions?(
+    options: RuntimeThreadExecutionOptions,
+  ): RuntimeThreadExecutionOptions;
+  /**
+   * Classifies execution-setting drift for this provider. `live` settings are
+   * carried by the next turn command; `session` settings require rebuilding
+   * the provider session.
+   */
+  classifyExecutionSettingsChange(
+    args: ClassifyProviderExecutionSettingsChangeArgs,
+  ): ProviderExecutionSettingsChange;
   process: { command: string; args: string[]; env?: Record<string, string> };
+
+  /**
+   * Whether this thread owns provider work that can outlive its turn. Some
+   * providers track that work by BB thread and others by provider session, so
+   * both identifiers are given.
+   */
+  hasOpenThreadWork?(args: {
+    providerThreadId: string;
+    threadId: string;
+  }): boolean;
 
   buildCommandPlan(command: AdapterCommand): ProviderCommandPlan;
   /**
@@ -293,6 +290,8 @@ export interface ProviderAdapter {
   translateAcceptedCommand(
     args: ProviderAcceptedCommandTranslationArgs,
   ): ThreadEvent[];
+  /** Clears adapter-local turn state after the provider reports no active turn. */
+  clearActiveTurnState?(threadId: string): void;
   /**
    * Called when a thread detaches because its provider process exited or the
    * runtime is shutting down. Returns events reconciling adapter state that
@@ -310,9 +309,4 @@ export interface ProviderAdapter {
   buildInteractiveResponse?(
     args: BuildInteractiveResponseArgs,
   ): ProviderInteractiveResponse;
-}
-
-export interface BuildInteractiveResponseArgs {
-  request: DecodedInteractiveRequest;
-  resolution: PendingInteractionResolution;
 }

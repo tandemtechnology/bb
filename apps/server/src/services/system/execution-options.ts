@@ -9,9 +9,8 @@ import {
   ACP_DEFAULT_MODEL_ID,
   buildAcpProviderInfo,
   isAcpProviderId,
-  listBuiltInAgentProviderInfos,
-  listClaudeCodeFallbackModels,
-} from "@bb/agent-providers";
+} from "../providers/acp-provider-tier.js";
+import { listClaudeCodeFallbackModels } from "./claude-code-fallback-models.js";
 import {
   formatCustomAcpAgentProviderId,
   type CustomAcpAgent,
@@ -29,8 +28,13 @@ import { ApiError } from "../../errors.js";
 import { callHostRetryableOnlineRpc } from "../hosts/online-rpc.js";
 import { getHostPermissionCeiling } from "../hosts/permission-ceiling.js";
 import { requireEnvironment } from "../lib/entity-lookup.js";
+import type { ProviderRegistryService } from "../providers/provider-registry.js";
 import { getSupportedReasoningLevelsForProvider } from "../threads/thread-reasoning-policy.js";
 import { resolveSystemLookupHostId } from "./host-lookup.js";
+import {
+  isAcpProviderTierRegistered,
+  requireBridgeLaunchForProviderId,
+} from "./provider-bridge-launch.js";
 import {
   buildKnownAcpProviderInfo,
   findKnownAcpAgentForProviderId,
@@ -63,6 +67,14 @@ type ModelListResult = Pick<
   SystemExecutionOptionsResponse,
   "modelLoadError" | "models" | "selectedOnlyModels"
 >;
+
+function unavailableProviderModelResult(providerId: string): ModelListResult {
+  return {
+    models: [],
+    selectedOnlyModels: [],
+    modelLoadError: { providerId, code: "provider_unavailable" },
+  };
+}
 
 interface AppendCustomModelsArgs {
   customModels: CustomProviderModel[];
@@ -97,12 +109,10 @@ function buildSyntheticAcpDefaultModel(provider: ProviderInfo): AvailableModel {
     model: ACP_DEFAULT_MODEL_ID,
     displayName: provider.displayName,
     description: "Model selection is managed by the connected ACP agent.",
-    supportedReasoningEfforts: [
-      {
-        reasoningEffort: "medium",
-        description: "Reasoning effort is managed by the connected ACP agent.",
-      },
-    ],
+    supportedReasoningEfforts: [{
+      reasoningEffort: "medium",
+      description: "Reasoning effort is managed by the connected ACP agent.",
+    }],
     defaultReasoningEffort: "medium",
     isDefault: true,
   };
@@ -112,9 +122,7 @@ function labelSyntheticAcpDefaultModel(
   provider: ProviderInfo,
   models: AvailableModel[],
 ): AvailableModel[] {
-  if (!isAcpProviderId(provider.id)) {
-    return models;
-  }
+  if (!isAcpProviderId(provider.id)) return models;
   return models.map((model) =>
     model.model === ACP_DEFAULT_MODEL_ID
       ? { ...model, displayName: provider.displayName }
@@ -135,16 +143,23 @@ function buildCustomAcpProviderInfo(agent: CustomAcpAgent): ProviderInfo {
 }
 
 function listConfiguredSystemProviderInfos(
-  customAcpAgents: CustomAcpAgent[],
+  deps: Pick<LoggedWorkSessionDeps, "config" | "providerRegistry">,
   installedKnownAcpAgents: readonly KnownAcpAgent[],
 ): ProviderInfo[] {
+  // Dynamic ACP ids are never registered; they run on the ACP tier plugin's
+  // bridge, so they exist only while that plugin does.
+  const acpTierAvailable = isAcpProviderTierRegistered(deps);
   const providers = [
-    ...listBuiltInAgentProviderInfos(),
-    ...customAcpAgents.map(buildCustomAcpProviderInfo),
+    // The registry is the single provider-metadata source: the core seed plus
+    // live plugin registrations (bb.agents.experimental_registerProvider).
+    ...deps.providerRegistry.list().map((entry) => entry.info),
+    ...(acpTierAvailable
+      ? deps.config.customAcpAgents.map(buildCustomAcpProviderInfo)
+      : []),
   ];
   const seenProviderIds = new Set(providers.map((provider) => provider.id));
   for (const agent of installedKnownAcpAgents) {
-    if (seenProviderIds.has(agent.id)) {
+    if (seenProviderIds.has(agent.id) || !acpTierAvailable) {
       continue;
     }
     seenProviderIds.add(agent.id);
@@ -154,12 +169,14 @@ function listConfiguredSystemProviderInfos(
 }
 
 function includeRequestedKnownAcpProvider(
+  deps: Pick<LoggedWorkSessionDeps, "providerRegistry">,
   providers: ProviderInfo[],
   providerId: string | undefined,
 ): ProviderInfo[] {
   if (
     providerId === undefined ||
-    providers.some((provider) => provider.id === providerId)
+    providers.some((provider) => provider.id === providerId) ||
+    !isAcpProviderTierRegistered(deps)
   ) {
     return providers;
   }
@@ -196,6 +213,10 @@ async function listInstalledKnownAcpAgents(
   deps: LoggedWorkSessionDeps,
   hostId: string,
 ): Promise<KnownAcpAgent[]> {
+  // No ACP bridge, no ACP agents to offer — skip the host probe entirely.
+  if (!isAcpProviderTierRegistered(deps)) {
+    return [];
+  }
   const customProviderIds = new Set(
     deps.config.customAcpAgents.map((agent) =>
       formatCustomAcpAgentProviderId(agent.id),
@@ -246,7 +267,7 @@ async function listSystemProviderInfosForHost(
   hostId: string,
 ): Promise<ProviderInfo[]> {
   return listConfiguredSystemProviderInfos(
-    deps.config.customAcpAgents,
+    deps,
     await listInstalledKnownAcpAgents(deps, hostId),
   );
 }
@@ -274,7 +295,7 @@ function resolveSystemProviderInfosPlan(
       hostId: null,
       hostLookupError: error,
       providersPromise: Promise.resolve(
-        listConfiguredSystemProviderInfos(deps.config.customAcpAgents, []),
+        listConfiguredSystemProviderInfos(deps, []),
       ),
     };
   }
@@ -297,6 +318,9 @@ export async function listSystemProviderInfos(
   deps: LoggedWorkSessionDeps,
   query: ListSystemProviderInfosRequest = {},
 ): Promise<ProviderInfo[]> {
+  // Plugins register their providers after the listener is already serving, so
+  // an early request would otherwise report an empty provider list.
+  await deps.providerRegistry.whenRegistrationsSettled();
   return (await resolveSystemProviderInfos(deps, query)).providers;
 }
 
@@ -319,11 +343,13 @@ export async function resolveSystemProviderModels(
   deps: LoggedWorkSessionDeps,
   args: ResolveSystemProviderModelsArgs,
 ): Promise<ModelListResult> {
-  const configuredProvider = listConfiguredSystemProviderInfos(
-    deps.config.customAcpAgents,
-    [],
-  ).find((provider) => provider.id === args.providerId);
-  const knownAcpAgent = findKnownAcpAgentForProviderId(args.providerId);
+  await deps.providerRegistry.whenProviderRegistered(args.providerId);
+  const configuredProvider = listConfiguredSystemProviderInfos(deps, []).find(
+    (provider) => provider.id === args.providerId,
+  );
+  const knownAcpAgent = isAcpProviderTierRegistered(deps)
+    ? findKnownAcpAgentForProviderId(args.providerId)
+    : undefined;
   const provider =
     configuredProvider ??
     (knownAcpAgent === undefined
@@ -342,12 +368,15 @@ export async function resolveSystemProviderModels(
     hostId: args.hostId,
     provider,
   });
-  const { models, selectedOnlyModels } = appendCustomModels({
-    customModels: deps.config.customModels,
-    models: result.models,
-    providerId: provider.id,
-    selectedOnlyModels: result.selectedOnlyModels,
-  });
+  const { models, selectedOnlyModels } = appendCustomModels(
+    deps.providerRegistry,
+    {
+      customModels: deps.config.customModels,
+      models: result.models,
+      providerId: provider.id,
+      selectedOnlyModels: result.selectedOnlyModels,
+    },
+  );
   return {
     models,
     selectedOnlyModels,
@@ -355,7 +384,10 @@ export async function resolveSystemProviderModels(
   };
 }
 
-function buildCustomModel(customModel: CustomProviderModel): AvailableModel {
+function buildCustomModel(
+  registry: ProviderRegistryService,
+  customModel: CustomProviderModel,
+): AvailableModel {
   return {
     id: customModel.model,
     model: customModel.model,
@@ -367,7 +399,7 @@ function buildCustomModel(customModel: CustomProviderModel): AvailableModel {
     // ladder comes from the same per-provider policy table that validates
     // reasoning overrides, so the picker and validation cannot drift apart.
     supportedReasoningEfforts: reasoningEffortsForLevels(
-      getSupportedReasoningLevelsForProvider(customModel.providerId),
+      getSupportedReasoningLevelsForProvider(registry, customModel.providerId),
     ),
     defaultReasoningEffort: "medium",
     isDefault: false,
@@ -381,12 +413,15 @@ function buildCustomModel(customModel: CustomProviderModel): AvailableModel {
 // describes accurately but no longer offers) are promoted into the active
 // list instead of being shadowed by a synthesized entry. This also runs when
 // the provider model list failed to load so custom models stay selectable.
-export function appendCustomModels({
-  customModels,
-  models,
-  providerId,
-  selectedOnlyModels,
-}: AppendCustomModelsArgs): AppendCustomModelsResult {
+export function appendCustomModels(
+  registry: ProviderRegistryService,
+  {
+    customModels,
+    models,
+    providerId,
+    selectedOnlyModels,
+  }: AppendCustomModelsArgs,
+): AppendCustomModelsResult {
   const providerCustomModels = customModels.filter(
     (customModel) => customModel.providerId === providerId,
   );
@@ -411,7 +446,7 @@ export function appendCustomModels({
       appendedModels.push(selectedOnlyMatch);
       continue;
     }
-    appendedModels.push(buildCustomModel(customModel));
+    appendedModels.push(buildCustomModel(registry, customModel));
   }
 
   return {
@@ -429,6 +464,11 @@ export async function resolveSystemExecutionOptions(
   deps: LoggedWorkSessionDeps,
   query: SystemExecutionOptionsRequest,
 ): Promise<SystemExecutionOptionsResponse> {
+  if (query.providerId === undefined) {
+    await deps.providerRegistry.whenRegistrationsSettled();
+  } else {
+    await deps.providerRegistry.whenProviderRegistered(query.providerId);
+  }
   const cwd =
     query.environmentId === undefined
       ? undefined
@@ -436,7 +476,7 @@ export async function resolveSystemExecutionOptions(
   const { hostId, hostLookupError, providersPromise } =
     resolveSystemProviderInfosPlan(deps, query);
   const configuredRequestedProvider = query.providerId
-    ? listConfiguredSystemProviderInfos(deps.config.customAcpAgents, []).find(
+    ? listConfiguredSystemProviderInfos(deps, []).find(
         (provider) => provider.id === query.providerId,
       )
     : undefined;
@@ -455,7 +495,11 @@ export async function resolveSystemExecutionOptions(
     await earlyModelResultPromise?.catch(() => undefined);
     throw error;
   }
-  providers = includeRequestedKnownAcpProvider(providers, query.providerId);
+  providers = includeRequestedKnownAcpProvider(
+    deps,
+    providers,
+    query.providerId,
+  );
   const requestedProvider = query.providerId
     ? providers.find((provider) => provider.id === query.providerId)
     : undefined;
@@ -476,13 +520,24 @@ export async function resolveSystemExecutionOptions(
     };
   }
 
+  if (!modelsProvider.available) {
+    return {
+      providers,
+      permissionCeiling,
+      ...unavailableProviderModelResult(modelsProvider.id),
+    };
+  }
+
   if (hostId === null) {
-    const { models, selectedOnlyModels } = appendCustomModels({
-      customModels: deps.config.customModels,
-      models: [],
-      providerId: modelsProvider.id,
-      selectedOnlyModels: [],
-    });
+    const { models, selectedOnlyModels } = appendCustomModels(
+      deps.providerRegistry,
+      {
+        customModels: deps.config.customModels,
+        models: [],
+        providerId: modelsProvider.id,
+        selectedOnlyModels: [],
+      },
+    );
     return {
       providers,
       permissionCeiling,
@@ -507,12 +562,15 @@ export async function resolveSystemExecutionOptions(
           provider: modelsProvider,
         });
 
-  const { models, selectedOnlyModels } = appendCustomModels({
-    customModels: deps.config.customModels,
-    models: modelResult.models,
-    providerId: modelsProvider.id,
-    selectedOnlyModels: modelResult.selectedOnlyModels,
-  });
+  const { models, selectedOnlyModels } = appendCustomModels(
+    deps.providerRegistry,
+    {
+      customModels: deps.config.customModels,
+      models: modelResult.models,
+      providerId: modelsProvider.id,
+      selectedOnlyModels: modelResult.selectedOnlyModels,
+    },
+  );
 
   return {
     providers,
@@ -535,6 +593,9 @@ async function loadSystemProviderModels(
     provider: ProviderInfo;
   },
 ): Promise<ModelListResult> {
+  if (!provider.available) {
+    return unavailableProviderModelResult(provider.id);
+  }
   const customAcpAgent = findCustomAcpAgentForProviderId(
     deps.config.customAcpAgents,
     provider.id,
@@ -550,6 +611,7 @@ async function loadSystemProviderModels(
       modelLoadError: null,
     };
   }
+  const bridgeLaunch = requireBridgeLaunchForProviderId(deps, provider.id);
   try {
     const { models, selectedOnlyModels } = await callHostRetryableOnlineRpc(
       deps,
@@ -570,6 +632,7 @@ async function loadSystemProviderModels(
                     normalizeHostDaemonAcpLaunchSpec(knownAcpAgent),
                 }
               : {}),
+          bridgeLaunch,
         },
       },
     );

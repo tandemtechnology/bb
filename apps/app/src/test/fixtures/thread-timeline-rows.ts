@@ -159,6 +159,7 @@ export interface WorkflowRowArgs extends RowBaseOverrideArgs {
   error?: string | null;
   id?: string;
   itemId?: string;
+  model?: string | null;
   seq?: number;
   sourceSeqEnd?: number;
   sourceSeqStart?: number;
@@ -446,7 +447,11 @@ export function conversationRow({
             : null,
       systemMessageKind,
       systemMessageSubject,
-      turnRequest: turnRequest ?? { kind: "message", status: "accepted" },
+      turnRequest: turnRequest ?? {
+        isGrouped: false,
+        kind: "message",
+        status: "accepted",
+      },
     };
   }
   return {
@@ -752,6 +757,7 @@ export function workflowRow({
   error = null,
   id = DEFAULT_WORKFLOW_ID,
   itemId,
+  model = null,
   seq,
   sourceSeqEnd,
   sourceSeqStart,
@@ -785,6 +791,7 @@ export function workflowRow({
     taskType,
     workflowName,
     description,
+    model,
     taskStatus,
     workflow,
     usage,

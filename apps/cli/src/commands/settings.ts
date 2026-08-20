@@ -3,6 +3,7 @@ import {
   appCommandIdSchema,
   appShortcutSchema,
   appSettingsSchema,
+  experimentKeySchema,
   experimentsSchema,
   type AppSettings,
   type AppShortcut,
@@ -59,7 +60,6 @@ function updateGeneralSetting(
   value: boolean,
 ): AppSettings {
   switch (key) {
-    case "caffeinate":
     case "showKeyboardHints":
     case "steerActiveThreadOnEnter":
     case "showUnhandledProviderEvents":
@@ -80,14 +80,14 @@ function updateExperiment(
   value: string,
 ): Experiments {
   const enabled = parseBoolean(value);
-  switch (key) {
-    case "claudeCodeMockCliTraffic":
-    case "newOnboarding":
-    case "toolsHub":
-      return experimentsSchema.parse({ ...experiments, [key]: enabled });
-    default:
-      throw new Error(`Unknown experiment '${key}'.`);
+  const experimentKey = experimentKeySchema.safeParse(key);
+  if (!experimentKey.success) {
+    throw new Error(`Unknown experiment '${key}'.`);
   }
+  return experimentsSchema.parse({
+    ...experiments,
+    [experimentKey.data]: enabled,
+  });
 }
 
 export function registerSettingsCommands(

@@ -6,8 +6,10 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
 } from "@testing-library/react";
-import type { ReactNode } from "react";
+import { Profiler, startTransition, type ReactNode } from "react";
+import { flushSync } from "react-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   resetPluginSlotStoreForTest,
@@ -25,6 +27,7 @@ const mocks = vi.hoisted(() => {
     isPointerCoarse: false,
     scrollToBottom: vi.fn(),
     permissionModePicker: vi.fn(),
+    voiceState: "idle" as "idle" | "recording" | "transcribing" | "error",
   };
   return Object.assign(values, {});
 });
@@ -53,12 +56,14 @@ vi.mock("@/components/promptbox/PromptBoxInternal", () => ({
     footerStart,
     compact,
     onSubmit,
+    blurOnPointerSubmit,
     promptBoxRef,
     submission,
     suppressPluginComposerCustomizations,
     zenMode,
     heightAnimationKey,
     minHeight,
+    voice,
   }: {
     footerStart?: ReactNode;
     compact?: {
@@ -66,6 +71,7 @@ vi.mock("@/components/promptbox/PromptBoxInternal", () => ({
       placeholder?: string;
     };
     onSubmit: () => void;
+    blurOnPointerSubmit?: boolean;
     promptBoxRef?: {
       current: {
         captureHeightForLayoutChange: () => void;
@@ -77,6 +83,7 @@ vi.mock("@/components/promptbox/PromptBoxInternal", () => ({
     zenMode?: { resetKey: string | number };
     heightAnimationKey?: string | number;
     minHeight?: number;
+    voice?: { state: "idle" | "recording" | "transcribing" | "error" };
   }) => (
     <div
       data-testid="prompt-box"
@@ -84,6 +91,7 @@ vi.mock("@/components/promptbox/PromptBoxInternal", () => ({
       data-zen-reset-key={zenMode?.resetKey}
       data-height-animation-key={heightAnimationKey}
       data-min-height={minHeight}
+      data-voice-state={voice?.state}
       data-plugin-customizations-suppressed={
         suppressPluginComposerCustomizations ? "true" : "false"
       }
@@ -105,7 +113,19 @@ vi.mock("@/components/promptbox/PromptBoxInternal", () => ({
         }}
       />
       {compact?.isCompact ? <span>{compact.placeholder}</span> : null}
-      <button type="button" onClick={onSubmit}>
+      <button
+        type="button"
+        onClick={(event) => {
+          onSubmit();
+          if (
+            blurOnPointerSubmit &&
+            event.detail > 0 &&
+            document.activeElement instanceof HTMLElement
+          ) {
+            document.activeElement.blur();
+          }
+        }}
+      >
         Submit
       </button>
       <button type="button" onClick={submission?.onModifierSubmit}>
@@ -117,7 +137,7 @@ vi.mock("@/components/promptbox/PromptBoxInternal", () => ({
 
 vi.mock("@/components/promptbox/usePromptVoice", () => ({
   usePromptVoice: () => ({
-    state: "idle",
+    state: mocks.voiceState,
     isSupported: false,
     stream: null,
     start: vi.fn(),
@@ -243,6 +263,7 @@ afterEach(() => {
 beforeEach(() => {
   mocks.isCompactViewport = false;
   mocks.isPointerCoarse = false;
+  mocks.voiceState = "idle";
   resizeObserverCallback = null;
   vi.stubGlobal(
     "ResizeObserver",
@@ -258,6 +279,48 @@ beforeEach(() => {
 });
 
 describe("FollowUpPromptBox", () => {
+  it("does not commit an unchanged measurement while a height update is pending", () => {
+    const onRender = vi.fn();
+    render(
+      <Profiler id="follow-up-prompt-box" onRender={onRender}>
+        <FollowUpPromptBox
+          {...createFollowUpPromptBoxProps({ kind: "ready" })}
+          stack={<div data-testid="measured-stack">Stack</div>}
+        />
+      </Profiler>,
+    );
+    const stackElement = screen.getByTestId("measured-stack").parentElement;
+    if (!stackElement) throw new Error("Expected measured composer stack");
+    Object.defineProperty(stackElement, "offsetHeight", {
+      configurable: true,
+      value: 24,
+    });
+    let commitsAfterSynchronousSignal = -1;
+    const resizeEntries = [
+      {
+        target: stackElement,
+        borderBoxSize: [{ blockSize: 24 }],
+        contentRect: { height: 999 },
+      } as unknown as ResizeObserverEntry,
+    ];
+
+    act(() => {
+      startTransition(() => {
+        resizeObserverCallback?.(resizeEntries, {} as ResizeObserver);
+      });
+      flushSync(() => {
+        resizeObserverCallback?.(resizeEntries, {} as ResizeObserver);
+      });
+      commitsAfterSynchronousSignal = onRender.mock.calls.length;
+    });
+
+    expect(commitsAfterSynchronousSignal).toBe(1);
+    expect(onRender).toHaveBeenCalledTimes(2);
+    expect(onRender.mock.calls[0]?.[1]).toBe("mount");
+    expect(onRender.mock.calls[1]?.[1]).toBe("update");
+    expect(screen.getByTestId("prompt-box").dataset.minHeight).toBe("76");
+  });
+
   it("includes expanding plugin banners in measured stack compensation", () => {
     setPluginSlotRegistrations("measured-banner", {
       homepageSections: [],
@@ -300,17 +363,31 @@ describe("FollowUpPromptBox", () => {
     expect(screen.getByText("Expandable plugin banner")).toBeTruthy();
     const promptBox = screen.getByTestId("prompt-box");
     const initialMinHeight = Number(promptBox.getAttribute("data-min-height"));
+    const stackElement = screen
+      .getByText("Expandable plugin banner")
+      .closest("[data-bb-plugin-root]")?.parentElement;
+    if (!stackElement) throw new Error("Expected measured composer stack");
+    Object.defineProperty(stackElement, "offsetHeight", {
+      configurable: true,
+      value: 24,
+    });
 
     act(() => {
       resizeObserverCallback?.(
-        [{ contentRect: { height: 24 } } as ResizeObserverEntry],
+        [
+          {
+            target: stackElement,
+            borderBoxSize: [{ blockSize: 24 }],
+            contentRect: { height: 999 },
+          } as unknown as ResizeObserverEntry,
+        ],
         {} as ResizeObserver,
       );
+      resizeObserverCallback?.([], {} as ResizeObserver);
     });
 
-    expect(Number(promptBox.getAttribute("data-min-height"))).toBeLessThan(
-      initialMinHeight,
-    );
+    expect(initialMinHeight).toBe(100);
+    expect(promptBox.getAttribute("data-min-height")).toBe("76");
   });
 
   it("renders plugin banners above native stack content", () => {
@@ -358,6 +435,45 @@ describe("FollowUpPromptBox", () => {
       .closest("[data-bb-plugin-root]");
     const queuedMessages = screen.getByTestId("queued-messages");
     expect(queuedMessages.previousElementSibling).toBe(pluginHeaderRoot);
+  });
+
+  it("does not mount plugin banners for a retained inactive composer without a real scope", () => {
+    setPluginSlotRegistrations("inactive-banner", {
+      homepageSections: [],
+      settingsSections: [],
+      navPanels: [],
+      threadPanelActions: [],
+      composerCustomizations: [
+        {
+          id: "inactive",
+          banners: [
+            {
+              id: "banner",
+              component: () => (
+                <div data-testid="inactive-plugin-banner">Plugin banner</div>
+              ),
+            },
+          ],
+        },
+      ],
+      pendingInteractions: [],
+      sidebarFooterActions: [],
+      fileOpeners: [],
+      messageDirectives: [],
+    });
+
+    render(
+      <FollowUpPromptBox
+        {...createFollowUpPromptBoxProps({ kind: "ready" })}
+        stack={<div data-testid="retained-native-stack">Queued messages</div>}
+        pluginComposerHost={null}
+        pluginComposerScope={null}
+        suppressPluginComposerCustomizations
+      />,
+    );
+
+    expect(screen.getByTestId("retained-native-stack")).toBeTruthy();
+    expect(screen.queryByTestId("inactive-plugin-banner")).toBeNull();
   });
 
   it("keeps the bottom composer mounted when its stack changes", () => {
@@ -590,6 +706,71 @@ describe("FollowUpPromptBox", () => {
     ).toBeNull();
   });
 
+  it("collapses after a pointer submission when the keyboard viewport settles", async () => {
+    mocks.isCompactViewport = true;
+    mocks.isPointerCoarse = true;
+    const originalDescriptor = Object.getOwnPropertyDescriptor(
+      window,
+      "visualViewport",
+    );
+    const visualViewport = Object.assign(new EventTarget(), { height: 500 });
+    Object.defineProperty(window, "visualViewport", {
+      configurable: true,
+      value: visualViewport,
+    });
+    const props = createFollowUpPromptBoxProps({ kind: "ready" });
+
+    try {
+      render(<FollowUpPromptBox {...props} />);
+      const input = screen.getByRole("textbox", { name: "Follow-up prompt" });
+      act(() => input.focus());
+      act(() => {
+        visualViewport.height = 300;
+        visualViewport.dispatchEvent(new Event("resize"));
+      });
+      await waitFor(() =>
+        expect(
+          screen.getByTestId("prompt-box").getAttribute("data-compact"),
+        ).toBe("false"),
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Submit" }), {
+        detail: 1,
+      });
+
+      expect(props.composer?.onSubmit).toHaveBeenCalledOnce();
+      expect(
+        screen.getByTestId("prompt-box").getAttribute("data-compact"),
+      ).toBe("false");
+
+      await act(
+        () =>
+          new Promise<void>((resolve) => {
+            window.requestAnimationFrame(() => resolve());
+          }),
+      );
+      expect(
+        screen.getByTestId("prompt-box").getAttribute("data-compact"),
+      ).toBe("false");
+
+      act(() => {
+        visualViewport.height = 500;
+        visualViewport.dispatchEvent(new Event("resize"));
+      });
+      await waitFor(() =>
+        expect(
+          screen.getByTestId("prompt-box").getAttribute("data-compact"),
+        ).toBe("true"),
+      );
+    } finally {
+      if (originalDescriptor) {
+        Object.defineProperty(window, "visualViewport", originalDescriptor);
+      } else {
+        Reflect.deleteProperty(window, "visualViewport");
+      }
+    }
+  });
+
   it("expands while focus is within the mobile composer", () => {
     mocks.isCompactViewport = true;
     const props = createFollowUpPromptBoxProps({ kind: "ready" });
@@ -598,7 +779,7 @@ describe("FollowUpPromptBox", () => {
 
     const input = screen.getByRole("textbox", { name: "Follow-up prompt" });
     const submit = screen.getByRole("button", { name: "Submit" });
-    fireEvent.focus(input);
+    act(() => input.focus());
 
     expect(screen.getByTestId("prompt-box").getAttribute("data-compact")).toBe(
       "false",
@@ -684,7 +865,7 @@ describe("FollowUpPromptBox", () => {
     }
   });
 
-  it("collapses on an interaction outside the mobile composer", () => {
+  it("stays expanded during a timeline gesture and collapses when focus leaves", async () => {
     mocks.isCompactViewport = true;
     render(
       <>
@@ -697,15 +878,24 @@ describe("FollowUpPromptBox", () => {
     const input = screen.getByRole("textbox", { name: "Follow-up prompt" });
     const outside = screen.getByRole("button", { name: "Outside composer" });
 
-    fireEvent.focus(input);
+    act(() => input.focus());
     fireEvent.pointerDown(outside);
 
+    expect(document.activeElement).toBe(input);
     expect(screen.getByTestId("prompt-box").getAttribute("data-compact")).toBe(
-      "true",
+      "false",
+    );
+
+    act(() => outside.focus());
+
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("prompt-box").getAttribute("data-compact"),
+      ).toBe("true"),
     );
   });
 
-  it("stays expanded while a composer-owned overlay is open", () => {
+  it("stays expanded while a composer-owned overlay is open", async () => {
     mocks.isCompactViewport = true;
     render(
       <>
@@ -722,19 +912,22 @@ describe("FollowUpPromptBox", () => {
     });
     trigger.setAttribute("aria-haspopup", "menu");
     trigger.setAttribute("aria-expanded", "true");
-    fireEvent.focus(input);
+    act(() => input.focus());
 
     fireEvent.pointerDown(portaledContent);
-    fireEvent.focusIn(portaledContent);
+    act(() => portaledContent.focus());
 
     expect(screen.getByTestId("prompt-box").getAttribute("data-compact")).toBe(
       "false",
     );
 
     trigger.setAttribute("aria-expanded", "false");
-    fireEvent.pointerDown(portaledContent);
-    expect(screen.getByTestId("prompt-box").getAttribute("data-compact")).toBe(
-      "true",
+    act(() => trigger.focus());
+    act(() => portaledContent.focus());
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("prompt-box").getAttribute("data-compact"),
+      ).toBe("true"),
     );
   });
 
@@ -748,16 +941,73 @@ describe("FollowUpPromptBox", () => {
     );
     render(<FollowUpPromptBox {...props} />);
     const input = screen.getByRole("textbox", { name: "Follow-up prompt" });
-    fireEvent.focus(input);
+    act(() => input.focus());
 
     fireEvent.pointerDown(
       screen.getByRole("button", { name: "Read only mode" }),
     );
-    fireEvent.blur(input);
 
     expect(screen.getByTestId("prompt-box").getAttribute("data-compact")).toBe(
       "false",
     );
+  });
+
+  it("collapses after the keyboard-dismissal fallback timeout", () => {
+    mocks.isCompactViewport = true;
+    mocks.isPointerCoarse = true;
+    vi.useFakeTimers();
+    const originalDescriptor = Object.getOwnPropertyDescriptor(
+      window,
+      "visualViewport",
+    );
+    const visualViewport = Object.assign(new EventTarget(), { height: 500 });
+    Object.defineProperty(window, "visualViewport", {
+      configurable: true,
+      value: visualViewport,
+    });
+
+    try {
+      render(
+        <FollowUpPromptBox
+          {...createFollowUpPromptBoxProps({ kind: "ready" })}
+        />,
+      );
+      const input = screen.getByRole("textbox", { name: "Follow-up prompt" });
+      act(() => input.focus());
+      act(() => {
+        visualViewport.height = 300;
+        visualViewport.dispatchEvent(new Event("resize"));
+        vi.advanceTimersByTime(20);
+      });
+      expect(
+        screen.getByTestId("prompt-box").getAttribute("data-compact"),
+      ).toBe("false");
+
+      act(() => {
+        input.blur();
+        vi.advanceTimersByTime(20);
+      });
+      expect(
+        screen.getByTestId("prompt-box").getAttribute("data-compact"),
+      ).toBe("false");
+
+      act(() => vi.advanceTimersByTime(700));
+      expect(
+        screen.getByTestId("prompt-box").getAttribute("data-compact"),
+      ).toBe("false");
+
+      act(() => vi.advanceTimersByTime(100));
+      expect(
+        screen.getByTestId("prompt-box").getAttribute("data-compact"),
+      ).toBe("true");
+    } finally {
+      vi.useRealTimers();
+      if (originalDescriptor) {
+        Object.defineProperty(window, "visualViewport", originalDescriptor);
+      } else {
+        Reflect.deleteProperty(window, "visualViewport");
+      }
+    }
   });
 
   it("keeps the full composer visible on desktop", () => {
@@ -771,7 +1021,24 @@ describe("FollowUpPromptBox", () => {
     expect(screen.getByText("Local environment")).toBeTruthy();
   });
 
-  it("exposes focus state so narrow prompt containers can expand", () => {
+  it.each(["recording", "transcribing"] as const)(
+    "keeps the status footer while the prompt box handles voice controls during %s",
+    (state) => {
+      mocks.voiceState = state;
+      const props = createFollowUpPromptBoxProps({ kind: "ready" });
+      props.environmentSummary = <span>Local environment</span>;
+
+      render(<FollowUpPromptBox {...props} />);
+
+      expect(screen.getByTestId("prompt-box").dataset.voiceState).toBe(state);
+      expect(
+        document.querySelector("[data-follow-up-composer-footer]"),
+      ).toBeTruthy();
+      expect(screen.getByText("Local environment")).toBeTruthy();
+    },
+  );
+
+  it("exposes focus state so narrow prompt containers can expand", async () => {
     render(
       <>
         <FollowUpPromptBox
@@ -790,7 +1057,7 @@ describe("FollowUpPromptBox", () => {
       "compact",
     );
 
-    fireEvent.focus(input);
+    act(() => input.focus());
     expect(composer?.hasAttribute("data-follow-up-composer-expanded")).toBe(
       true,
     );
@@ -801,8 +1068,11 @@ describe("FollowUpPromptBox", () => {
     fireEvent.pointerDown(
       screen.getByRole("button", { name: "Outside composer" }),
     );
-    expect(composer?.hasAttribute("data-follow-up-composer-expanded")).toBe(
-      false,
+    act(() => screen.getByRole("button", { name: "Outside composer" }).focus());
+    await waitFor(() =>
+      expect(composer?.hasAttribute("data-follow-up-composer-expanded")).toBe(
+        false,
+      ),
     );
     expect(screen.getByTestId("prompt-box").dataset.heightAnimationKey).toBe(
       "compact",

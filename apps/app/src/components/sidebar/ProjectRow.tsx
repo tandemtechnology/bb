@@ -81,16 +81,21 @@ import {
   buildSectionThreadList,
   buildProjectThreadGroups,
   CHRONOLOGICAL_CONTAINER_ID,
+  collectProjectThreadItemNavigationEntries,
+  countProjectThreadItemRows,
   getProjectThreadItemDescendants,
   getSidebarDndItemId,
   isSidebarProjectThread,
+  projectThreadItemContainsThread,
   type EnvironmentThreadGroup,
   type ProjectThreadItem,
+  type ProjectThreadItemRowCountContext,
   type ProjectThreadNode,
   type SidebarSectionDefinition,
   type SidebarSectionGroup,
   type ThreadComparator,
 } from "./projectThreadGroups";
+import { SidebarWindowedItems } from "./SidebarWindowedItems";
 import { SidebarSectionRow } from "./SidebarSectionRow";
 import { TopLevelSidebarSection } from "./TopLevelSidebarSection";
 import {
@@ -266,6 +271,8 @@ interface ProjectThreadTreeGroupProps {
 }
 
 interface ThreadTreeNodeRowProps {
+  // Project of the enclosing group for a root node, or of the parent thread for
+  // a child node. A node whose thread lives elsewhere gets a cross-project marker.
   projectId: string;
   node: ProjectThreadNode;
   depthOffset: number;
@@ -1098,6 +1105,19 @@ const EnvironmentThreadGroupRow = memo(function EnvironmentThreadGroupRow({
     environmentId,
     representativeThread,
   });
+  // One environment group can hold hundreds of threads, so its node list
+  // windows like every other sibling list (#1261 review follow-up).
+  const nodeItems = useMemo<ProjectThreadItem[]>(
+    () => nodes.map((node) => ({ kind: "thread", node })),
+    [nodes],
+  );
+  const { itemKeys, estimateRows, getNavigationEntries, alwaysMountedKeys } =
+    useWindowedThreadItems({
+      items: nodeItems,
+      collapsedThreadIds,
+      collapsedEnvironmentIds,
+      selectedThreadId,
+    });
 
   return (
     <>
@@ -1122,22 +1142,34 @@ const EnvironmentThreadGroupRow = memo(function EnvironmentThreadGroupRow({
         {!isCollapsed ? (
           <div className="relative space-y-px">
             <ThreadTreeGroupLine parentRowDepth={rowDepth} />
-            {nodes.map((node) => (
-              <ThreadTreeNodeRow
-                key={node.thread.id}
-                projectId={projectId}
-                node={node}
-                depthOffset={depthOffset + 1}
-                isEnvGrouped
-                selectedThreadId={selectedThreadId}
-                collapsedThreadIds={collapsedThreadIds}
-                collapsedEnvironmentIds={collapsedEnvironmentIds}
-                variant={variant}
-                onProjectSelect={onProjectSelect}
-                onToggleThreadCollapsed={onToggleThreadCollapsed}
-                onToggleEnvironmentCollapsed={onToggleEnvironmentCollapsed}
-              />
-            ))}
+            <SidebarWindowedItems
+              itemKeys={itemKeys}
+              estimateRows={estimateRows}
+              getNavigationEntries={getNavigationEntries}
+              alwaysMountedKeys={alwaysMountedKeys}
+              renderItem={(index) => {
+                const node = nodes[index];
+                if (!node) {
+                  return null;
+                }
+                return (
+                  <ThreadTreeNodeRow
+                    key={node.thread.id}
+                    projectId={projectId}
+                    node={node}
+                    depthOffset={depthOffset + 1}
+                    isEnvGrouped
+                    selectedThreadId={selectedThreadId}
+                    collapsedThreadIds={collapsedThreadIds}
+                    collapsedEnvironmentIds={collapsedEnvironmentIds}
+                    variant={variant}
+                    onProjectSelect={onProjectSelect}
+                    onToggleThreadCollapsed={onToggleThreadCollapsed}
+                    onToggleEnvironmentCollapsed={onToggleEnvironmentCollapsed}
+                  />
+                );
+              }}
+            />
           </div>
         ) : null}
       </SidebarStickyGroup>
@@ -1348,6 +1380,13 @@ const SectionTreeItemRow = memo(function SectionTreeItemRow({
     () => getProjectThreadItemDescendants(section.items),
     [section.items],
   );
+  const { itemKeys, estimateRows, getNavigationEntries, alwaysMountedKeys } =
+    useWindowedThreadItems({
+      items: section.items,
+      collapsedThreadIds,
+      collapsedEnvironmentIds,
+      selectedThreadId,
+    });
 
   const childrenArea = showChildrenArea ? (
     <div className="relative space-y-px">
@@ -1356,27 +1395,41 @@ const SectionTreeItemRow = memo(function SectionTreeItemRow({
       ) : null}
       {showChildren ? (
         <SectionDndSortableList sectionDnd={sectionDnd} parentKey={section.key}>
-          {section.items.map((item) => (
-            <SectionDndItemRow
-              key={getItemKey(item)}
-              projectId={getItemProjectId(item)}
-              item={item}
-              depthOffset={
-                variant === "section" && depthOffset === 0 ? 0 : depthOffset + 1
+          <SidebarWindowedItems
+            itemKeys={itemKeys}
+            estimateRows={estimateRows}
+            getNavigationEntries={getNavigationEntries}
+            alwaysMountedKeys={alwaysMountedKeys}
+            renderItem={(index) => {
+              const item = section.items[index];
+              if (!item) {
+                return null;
               }
-              selectedThreadId={selectedThreadId}
-              collapsedThreadIds={collapsedThreadIds}
-              collapsedEnvironmentIds={collapsedEnvironmentIds}
-              variant={variant}
-              onProjectSelect={onProjectSelect}
-              onCreateThreadInSection={onCreateThreadInSection}
-              onRenameSection={onRenameSection}
-              onRemoveSection={onRemoveSection}
-              onToggleThreadCollapsed={onToggleThreadCollapsed}
-              onToggleEnvironmentCollapsed={onToggleEnvironmentCollapsed}
-              sectionDnd={sectionDnd}
-            />
-          ))}
+              return (
+                <SectionDndItemRow
+                  key={getItemKey(item)}
+                  projectId={getItemProjectId(item)}
+                  item={item}
+                  depthOffset={
+                    variant === "section" && depthOffset === 0
+                      ? 0
+                      : depthOffset + 1
+                  }
+                  selectedThreadId={selectedThreadId}
+                  collapsedThreadIds={collapsedThreadIds}
+                  collapsedEnvironmentIds={collapsedEnvironmentIds}
+                  variant={variant}
+                  onProjectSelect={onProjectSelect}
+                  onCreateThreadInSection={onCreateThreadInSection}
+                  onRenameSection={onRenameSection}
+                  onRemoveSection={onRemoveSection}
+                  onToggleThreadCollapsed={onToggleThreadCollapsed}
+                  onToggleEnvironmentCollapsed={onToggleEnvironmentCollapsed}
+                  sectionDnd={sectionDnd}
+                />
+              );
+            }}
+          />
         </SectionDndSortableList>
       ) : null}
       {sectionDnd ? (
@@ -1485,6 +1538,7 @@ const SectionTreeItemRow = memo(function SectionTreeItemRow({
     return (
       <TopLevelSidebarSection
         label={section.name}
+        sectionId={section.id}
         actions={topLevelActions}
         actionsAlwaysVisible
         actionsOpen={topLevelActionsOpen}
@@ -1510,6 +1564,7 @@ const SectionTreeItemRow = memo(function SectionTreeItemRow({
     <SidebarStickyGroup
       ref={sortableRef}
       style={sortableStyle}
+      data-sidebar-section-id={section.id}
       className={cn(
         "space-y-0.5 rounded-md transition-colors",
         isDropTargetActive &&
@@ -1598,17 +1653,29 @@ export const ThreadTreeNodeRow = memo(function ThreadTreeNodeRow({
     ],
   );
   const showChildren = !isCollapsed && hasChildren;
-  const rowProjectId =
-    variant === "section" ? node.thread.projectId : projectId;
+  // Route and draft keys always use the thread's own project; a child may live
+  // in a different project than the parent it nests under.
+  const rowProjectId = node.thread.projectId;
+  const crossProjectId = rowProjectId !== projectId ? rowProjectId : null;
   const hasComposerDraft = usePromptDraftHasInput({
     kind: "thread",
     projectId: rowProjectId,
     threadId: node.thread.id,
   });
+  // A parent thread can hold a long child list, so it windows like every
+  // other sibling list (#1261 review follow-up).
+  const { itemKeys, estimateRows, getNavigationEntries, alwaysMountedKeys } =
+    useWindowedThreadItems({
+      items: node.children,
+      collapsedThreadIds,
+      collapsedEnvironmentIds,
+      selectedThreadId,
+    });
   const row = (
     <ThreadRow
       projectId={rowProjectId}
       thread={node.thread}
+      crossProjectId={crossProjectId}
       isActive={selectedThreadId === node.thread.id}
       hasComposerDraft={hasComposerDraft}
       onProjectSelect={onProjectSelect}
@@ -1630,21 +1697,33 @@ export const ThreadTreeNodeRow = memo(function ThreadTreeNodeRow({
       {showChildren ? (
         <div className="relative space-y-px">
           <ThreadTreeGroupLine parentRowDepth={parentRowDepth} />
-          {node.children.map((item) => (
-            <ThreadTreeItemRow
-              key={getItemKey(item)}
-              projectId={projectId}
-              item={item}
-              depthOffset={depthOffset}
-              selectedThreadId={selectedThreadId}
-              collapsedThreadIds={collapsedThreadIds}
-              collapsedEnvironmentIds={collapsedEnvironmentIds}
-              variant={variant}
-              onProjectSelect={onProjectSelect}
-              onToggleThreadCollapsed={onToggleThreadCollapsed}
-              onToggleEnvironmentCollapsed={onToggleEnvironmentCollapsed}
-            />
-          ))}
+          <SidebarWindowedItems
+            itemKeys={itemKeys}
+            estimateRows={estimateRows}
+            getNavigationEntries={getNavigationEntries}
+            alwaysMountedKeys={alwaysMountedKeys}
+            renderItem={(index) => {
+              const item = node.children[index];
+              if (!item) {
+                return null;
+              }
+              return (
+                <ThreadTreeItemRow
+                  key={getItemKey(item)}
+                  projectId={rowProjectId}
+                  item={item}
+                  depthOffset={depthOffset}
+                  selectedThreadId={selectedThreadId}
+                  collapsedThreadIds={collapsedThreadIds}
+                  collapsedEnvironmentIds={collapsedEnvironmentIds}
+                  variant={variant}
+                  onProjectSelect={onProjectSelect}
+                  onToggleThreadCollapsed={onToggleThreadCollapsed}
+                  onToggleEnvironmentCollapsed={onToggleEnvironmentCollapsed}
+                />
+              );
+            }}
+          />
         </div>
       ) : null}
     </SidebarStickyGroup>
@@ -1682,6 +1761,60 @@ interface SectionThreadTreeItemsProps {
   renderTopLevelSectionHeaderActions?: SectionThreadTreeProps["renderTopLevelSectionHeaderActions"];
 }
 
+// Windowing inputs shared by every list of ProjectThreadItems: stable keys,
+// a placeholder row-count estimate, and the item holding the active thread
+// (kept mounted so DOM-driven keyboard navigation keeps its anchor).
+function useWindowedThreadItems({
+  items,
+  collapsedThreadIds,
+  collapsedEnvironmentIds,
+  selectedThreadId,
+}: {
+  items: readonly ProjectThreadItem[];
+  collapsedThreadIds: Set<string>;
+  collapsedEnvironmentIds: Set<string>;
+  selectedThreadId?: string;
+}) {
+  const collapsedSectionKeyList = useAtomValue(
+    sidebarCollapsedThreadSectionsAtom,
+  );
+  const itemKeys = useMemo(() => items.map(getItemKey), [items]);
+  const rowCountContext = useMemo<ProjectThreadItemRowCountContext>(
+    () => ({
+      collapsedThreadIds,
+      collapsedEnvironmentIds,
+      collapsedSectionKeys: new Set(collapsedSectionKeyList),
+    }),
+    [collapsedThreadIds, collapsedEnvironmentIds, collapsedSectionKeyList],
+  );
+  const estimateRows = useCallback(
+    (index: number) => {
+      const item = items[index];
+      return item ? countProjectThreadItemRows(item, rowCountContext) : 1;
+    },
+    [items, rowCountContext],
+  );
+  const getNavigationEntries = useCallback(
+    (index: number) => {
+      const item = items[index];
+      return item
+        ? collectProjectThreadItemNavigationEntries(item, rowCountContext)
+        : [];
+    },
+    [items, rowCountContext],
+  );
+  const alwaysMountedKeys = useMemo(() => {
+    if (!selectedThreadId) {
+      return undefined;
+    }
+    const activeItem = items.find((item) =>
+      projectThreadItemContainsThread(item, selectedThreadId),
+    );
+    return activeItem ? new Set([getItemKey(activeItem)]) : undefined;
+  }, [items, selectedThreadId]);
+  return { itemKeys, estimateRows, getNavigationEntries, alwaysMountedKeys };
+}
+
 // The one place that maps thread-tree items to rows. Every sidebar view
 // (project, chronological, sections) renders through this, so a row-prop
 // change lands once instead of being copied across each view's renderer.
@@ -1703,26 +1836,49 @@ function SectionThreadTreeItems({
   onRemoveSection,
   renderTopLevelSectionHeaderActions,
 }: SectionThreadTreeItemsProps) {
-  const rows = items.map((item) => (
-    <SectionDndItemRow
-      key={getItemKey(item)}
-      projectId={projectId ?? getItemProjectId(item)}
-      item={item}
-      depthOffset={depthOffset}
-      selectedThreadId={selectedThreadId}
-      collapsedThreadIds={collapsedThreadIds}
-      collapsedEnvironmentIds={collapsedEnvironmentIds}
-      variant={variant}
-      onProjectSelect={onProjectSelect}
-      onToggleThreadCollapsed={onToggleThreadCollapsed}
-      onToggleEnvironmentCollapsed={onToggleEnvironmentCollapsed}
-      onCreateThreadInSection={onCreateThreadInSection}
-      onRenameSection={onRenameSection}
-      onRemoveSection={onRemoveSection}
-      renderTopLevelSectionHeaderActions={renderTopLevelSectionHeaderActions}
-      sectionDnd={sectionDnd ?? undefined}
+  const { itemKeys, estimateRows, getNavigationEntries, alwaysMountedKeys } =
+    useWindowedThreadItems({
+      items,
+      collapsedThreadIds,
+      collapsedEnvironmentIds,
+      selectedThreadId,
+    });
+  const rows = (
+    <SidebarWindowedItems
+      itemKeys={itemKeys}
+      estimateRows={estimateRows}
+      getNavigationEntries={getNavigationEntries}
+      alwaysMountedKeys={alwaysMountedKeys}
+      renderItem={(index) => {
+        const item = items[index];
+        if (!item) {
+          return null;
+        }
+        return (
+          <SectionDndItemRow
+            key={getItemKey(item)}
+            projectId={projectId ?? getItemProjectId(item)}
+            item={item}
+            depthOffset={depthOffset}
+            selectedThreadId={selectedThreadId}
+            collapsedThreadIds={collapsedThreadIds}
+            collapsedEnvironmentIds={collapsedEnvironmentIds}
+            variant={variant}
+            onProjectSelect={onProjectSelect}
+            onToggleThreadCollapsed={onToggleThreadCollapsed}
+            onToggleEnvironmentCollapsed={onToggleEnvironmentCollapsed}
+            onCreateThreadInSection={onCreateThreadInSection}
+            onRenameSection={onRenameSection}
+            onRemoveSection={onRemoveSection}
+            renderTopLevelSectionHeaderActions={
+              renderTopLevelSectionHeaderActions
+            }
+            sectionDnd={sectionDnd ?? undefined}
+          />
+        );
+      }}
     />
-  ));
+  );
 
   return (
     <ProjectThreadTreeGroup
@@ -2244,7 +2400,10 @@ function ProjectRowComponent({
       project={project}
       onOpenChange={setIsContextActionsOpen}
     >
-      <div data-sidebar-sticky-project-item="">
+      <div
+        data-sidebar-sticky-project-item=""
+        data-sidebar-project-id={project.id}
+      >
         <TopLevelSidebarSection
           label={project.name}
           actions={projectActions}

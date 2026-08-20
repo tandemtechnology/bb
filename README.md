@@ -20,9 +20,8 @@
 [![npm version](https://img.shields.io/npm/v/bb-app.svg)](https://www.npmjs.com/package/bb-app)
 [![Join Discord](https://img.shields.io/badge/Discord-Join%20server-5865F2?logo=discord&logoColor=white)](https://discord.gg/kvBU6tJhcJ)
 
-bb is an agentic IDE that can control itself. You can seamlessly
-orchestrate all of your favorite coding agents together and have them
-programmatically use bb too.
+bb is an agentic IDE that builds itself. It can control, customize, and automate
+itself, laying the groundwork for your own software factory.
 
 Every surface — the desktop app, web app, CLI, and HTTP API — is a first-class
 way to drive bb. Work runs in threads you can follow live, steer at any point,
@@ -44,8 +43,9 @@ The recommended way to start using bb is the desktop app:
 
 **[Download the latest desktop app](https://github.com/get-bb/bb/releases/tag/desktop-latest)**
 
-The desktop build is currently macOS Apple Silicon (arm64) only. Intel Mac and
-Linux users should run bb with `npx` instead. On Windows, run bb inside
+The desktop app supports macOS on Apple Silicon (arm64). The Linux x64 AppImage
+is alpha: expect problems, and please report them. Intel Mac users should run bb
+with `npx` instead. On Windows, run bb inside
 [WSL2 (Windows Subsystem for Linux)](https://learn.microsoft.com/windows/wsl/install):
 install WSL2 first, then run the same `npx` command below from your WSL2 (Linux)
 shell. Native Windows PowerShell and CMD are not supported.
@@ -69,6 +69,20 @@ To run the newest automated build instead:
 npx bb-app@nightly
 ```
 
+npm 12 and later block dependency install scripts by default. bb needs those
+scripts to build its native add-ons. If your npm version is 12 or later, allow
+the scripts for the install:
+
+```bash
+npx --allow-scripts=better-sqlite3,node-pty,@parcel/watcher bb-app@latest
+```
+
+Or set the policy once for all global installs:
+
+```bash
+npm config set allow-scripts=better-sqlite3,node-pty,@parcel/watcher --location=user
+```
+
 bb uses the provider CLI you already have authenticated.
 
 For install requirements, provider setup, configuration, and package-focused
@@ -81,12 +95,12 @@ docs, start with
 by default; this fork is used for PHI-adjacent work under a BAA, so usage data
 only leaves the machine on a deliberate opt-in.
 
-Upstream behaviour, for reference: production runs (the desktop app and
+Upstream behavior, for reference: production runs (the desktop app and
 `npx bb-app`) send anonymous usage telemetry (app starts, thread creation
-counts, and user message counts) to help understand adoption. Identification is
-a random per-install id stored in your data dir — no user, host, project,
-workspace, or message content is ever attached. Development/source runs never
-send.
+counts, user message counts, and public plugin installs) to help understand
+adoption. Identification is a random per-install id stored in your data dir —
+no user, host, project, workspace, or message content is ever attached.
+Development/source runs never send.
 
 Here, none of that happens unless you set `BB_TELEMETRY=true`. With telemetry
 disabled nothing is created at all, not even the install id. See
@@ -214,7 +228,30 @@ Error: Could not locate the bindings file. Tried:
  → .../node_modules/better-sqlite3/build/better_sqlite3.node
 ```
 
-The usual cause is `ignore-scripts=true` in your `~/.npmrc`. Set the
+There are two usual causes.
+
+The first cause is npm 12 or later. Since npm 12, npm blocks dependency install
+scripts by default and prints
+`npm warn install-scripts N packages had install scripts blocked`. Name bb's
+native add-ons in `--allow-scripts` to let this one command run their install
+scripts:
+
+```bash
+npx --allow-scripts=better-sqlite3,node-pty,@parcel/watcher bb-app@latest
+```
+
+For a permanent install with the same setting, use:
+
+```bash
+npm install -g --allow-scripts=better-sqlite3,node-pty,@parcel/watcher bb-app
+bb-app
+```
+
+To allow them for all global installs on this machine, run
+`npm config set allow-scripts=better-sqlite3,node-pty,@parcel/watcher --location=user`.
+npm 10 and 11 accept or ignore the flag, so it is safe on every supported Node.
+
+The second cause is `ignore-scripts=true` in your `~/.npmrc`. Set the
 `npm_config_ignore_scripts` environment variable to let this one command run its
 install scripts:
 
@@ -236,3 +273,7 @@ The same error has other causes. A Node.js major-version change after the
 install causes it. A copy of `node_modules` from a different operating system,
 CPU architecture, or libc variant also causes it. To recover, install the
 package again, or run `npm rebuild better-sqlite3`.
+
+## Acknowledgements
+
+<a href="https://blacksmith.sh"><img src="assets/blacksmith-ci.png" alt="CI powered by Blacksmith" width="400"></a>

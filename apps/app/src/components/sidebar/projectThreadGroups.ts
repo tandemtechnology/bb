@@ -78,7 +78,7 @@ export type ThreadComparator = ((
 type WorktreeDisplayKind = "managed-worktree" | "unmanaged-worktree";
 type SidebarProjectThreadShape = Pick<
   ThreadListEntry,
-  "originKind" | "childOrigin" | "visibility"
+  "originKind" | "visibility"
 >;
 
 interface BuildThreadNodeArgs {
@@ -309,6 +309,58 @@ function isRootThread(
     thread.parentThreadId === null ||
     !projectThreadIds.has(thread.parentThreadId)
   );
+}
+
+/**
+ * Resolve the project group that shows a thread in "By project" mode. A child
+ * follows its root ancestor, so a child from another project stays nested under
+ * its parent instead of appearing as a root in its own project. When the parent
+ * chain is not in the list (archived, hidden, or a cycle), the thread falls
+ * back to its own project.
+ *
+ * The returned resolver memoizes per thread, so a sidebar pass over every
+ * thread walks each ancestor chain once instead of once per descendant.
+ */
+export function createSidebarProjectIdResolver(
+  threadById: ReadonlyMap<string, ThreadListEntry>,
+): (thread: ThreadListEntry) => string {
+  const sidebarProjectIdByThreadId = new Map<string, string>();
+  return (thread) => {
+    const cached = sidebarProjectIdByThreadId.get(thread.id);
+    if (cached !== undefined) {
+      return cached;
+    }
+    const chain: ThreadListEntry[] = [thread];
+    const visitedThreadIds = new Set<string>([thread.id]);
+    let current = thread;
+    let resolved: string | undefined;
+    while (current.parentThreadId !== null) {
+      const parent = threadById.get(current.parentThreadId);
+      if (parent === undefined || visitedThreadIds.has(parent.id)) {
+        break;
+      }
+      const parentResolved = sidebarProjectIdByThreadId.get(parent.id);
+      if (parentResolved !== undefined) {
+        resolved = parentResolved;
+        break;
+      }
+      visitedThreadIds.add(parent.id);
+      chain.push(parent);
+      current = parent;
+    }
+    const sidebarProjectId = resolved ?? current.projectId;
+    for (const member of chain) {
+      sidebarProjectIdByThreadId.set(member.id, sidebarProjectId);
+    }
+    return sidebarProjectId;
+  };
+}
+
+export function resolveSidebarProjectId(
+  thread: ThreadListEntry,
+  threadById: ReadonlyMap<string, ThreadListEntry>,
+): string {
+  return createSidebarProjectIdResolver(threadById)(thread);
 }
 
 export function buildProjectThreadGroups(
@@ -650,4 +702,154 @@ function bucketIntoSections(
     : sectionItemsByName;
   const orderedLooseItems = orderSiblingItems(looseItems, compareThreads);
   return [...sectionItems, ...orderedLooseItems];
+}
+
+export interface ProjectThreadItemRowCountContext {
+  collapsedThreadIds: ReadonlySet<string>;
+  collapsedEnvironmentIds: ReadonlySet<string>;
+  collapsedSectionKeys: ReadonlySet<string>;
+}
+
+function countThreadNodeRows(
+  node: ProjectThreadNode,
+  context: ProjectThreadItemRowCountContext,
+): number {
+  if (
+    node.children.length === 0 ||
+    context.collapsedThreadIds.has(node.thread.id)
+  ) {
+    return 1;
+  }
+  return node.children.reduce(
+    (total, child) => total + countProjectThreadItemRows(child, context),
+    1,
+  );
+}
+
+/**
+ * Count of the rows an item renders under the current collapse state. Drives
+ * placeholder-height estimates in the windowed sidebar thread list; exactness
+ * is not required because measured heights replace the estimate once an item
+ * has been on screen.
+ */
+export function countProjectThreadItemRows(
+  item: ProjectThreadItem,
+  context: ProjectThreadItemRowCountContext,
+): number {
+  switch (item.kind) {
+    case "thread":
+      return countThreadNodeRows(item.node, context);
+    case "environment":
+      if (context.collapsedEnvironmentIds.has(item.group.environmentId)) {
+        return 1;
+      }
+      return item.group.nodes.reduce(
+        (total, node) => total + countThreadNodeRows(node, context),
+        1,
+      );
+    case "section":
+      if (context.collapsedSectionKeys.has(item.group.key)) {
+        return 1;
+      }
+      return item.group.items.reduce(
+        (total, child) => total + countProjectThreadItemRows(child, context),
+        1,
+      );
+  }
+}
+
+/** True when the item's subtree renders a row for the given thread. */
+export function projectThreadItemContainsThread(
+  item: ProjectThreadItem,
+  threadId: string,
+): boolean {
+  switch (item.kind) {
+    case "thread":
+      return (
+        item.node.thread.id === threadId ||
+        item.node.children.some((child) =>
+          projectThreadItemContainsThread(child, threadId),
+        )
+      );
+    case "environment":
+      return item.group.nodes.some(
+        (node) =>
+          node.thread.id === threadId ||
+          node.children.some((child) =>
+            projectThreadItemContainsThread(child, threadId),
+          ),
+      );
+    case "section":
+      return item.group.items.some((child) =>
+        projectThreadItemContainsThread(child, threadId),
+      );
+  }
+}
+
+export interface ProjectThreadItemNavigationEntry {
+  threadId: string;
+  projectId: string;
+}
+
+function collectThreadNodeNavigationEntries(
+  node: ProjectThreadNode,
+  context: ProjectThreadItemRowCountContext,
+  entries: ProjectThreadItemNavigationEntry[],
+): void {
+  entries.push({
+    threadId: node.thread.id,
+    projectId: node.thread.projectId,
+  });
+  if (
+    node.children.length === 0 ||
+    context.collapsedThreadIds.has(node.thread.id)
+  ) {
+    return;
+  }
+  for (const child of node.children) {
+    collectProjectThreadItemNavigationEntriesInto(child, context, entries);
+  }
+}
+
+function collectProjectThreadItemNavigationEntriesInto(
+  item: ProjectThreadItem,
+  context: ProjectThreadItemRowCountContext,
+  entries: ProjectThreadItemNavigationEntry[],
+): void {
+  switch (item.kind) {
+    case "thread":
+      collectThreadNodeNavigationEntries(item.node, context, entries);
+      return;
+    case "environment":
+      if (context.collapsedEnvironmentIds.has(item.group.environmentId)) {
+        return;
+      }
+      for (const node of item.group.nodes) {
+        collectThreadNodeNavigationEntries(node, context, entries);
+      }
+      return;
+    case "section":
+      if (context.collapsedSectionKeys.has(item.group.key)) {
+        return;
+      }
+      for (const child of item.group.items) {
+        collectProjectThreadItemNavigationEntriesInto(child, context, entries);
+      }
+      return;
+  }
+}
+
+/**
+ * The threads an item's subtree renders, in visual order, respecting the
+ * current collapse state. Mirrors which rows would emit
+ * `data-sidebar-thread-shortcut-target` anchors when mounted, so a
+ * windowed-out placeholder can stand in for them during keyboard navigation.
+ */
+export function collectProjectThreadItemNavigationEntries(
+  item: ProjectThreadItem,
+  context: ProjectThreadItemRowCountContext,
+): ProjectThreadItemNavigationEntry[] {
+  const entries: ProjectThreadItemNavigationEntry[] = [];
+  collectProjectThreadItemNavigationEntriesInto(item, context, entries);
+  return entries;
 }

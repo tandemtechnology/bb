@@ -17,6 +17,7 @@ import {
   applyAppKeybindingOverrides,
   customThemeNameSchema,
   isBuiltInThemeId,
+  resolveCodeTheme,
   type AppKeybindingOverrides,
   type AppTheme,
 } from "@bb/domain";
@@ -50,7 +51,6 @@ import {
   resolveCustomThemeCssPath,
   resolveThemeRootPath,
 } from "../services/system/custom-themes.js";
-import { schedulePrimaryHostCaffeinateReconciliation } from "../services/system/app-settings.js";
 import {
   installGlobalCliSkills,
   listInstallableMachineIds,
@@ -141,8 +141,17 @@ export function registerSystemRoutes(
     faviconColor: AppTheme["faviconColor"],
   ): Promise<AppTheme> {
     const pluginCss = await pluginService.readThemeCss(themeId);
-    if (pluginCss !== null)
-      return { themeId, customCss: pluginCss, faviconColor };
+    if (pluginCss !== null) {
+      return {
+        themeId,
+        customCss: pluginCss,
+        faviconColor,
+        resolvedCodeTheme: resolveCodeTheme(
+          pluginService.readThemeCodeTheme(themeId),
+          themeId,
+        ),
+      };
+    }
     return resolveAppTheme(themeRoot, themeId, faviconColor);
   }
 
@@ -185,9 +194,6 @@ export function registerSystemRoutes(
   put(routes.generalSettings, (context, payload) => {
     setAppSettings(deps.db, payload);
     deps.hub.notifySystem(["config-changed"]);
-    schedulePrimaryHostCaffeinateReconciliation(deps, {
-      reason: "settings-updated",
-    });
     return context.json(getAppSettings(deps.db));
   });
 
@@ -229,11 +235,7 @@ export function registerSystemRoutes(
     // Broadcast like experiments: every window re-reads /system/config and
     // re-applies the active palette.
     deps.hub.notifySystem(["config-changed"]);
-    return context.json(
-      pluginCss === null
-        ? resolveAppTheme(themeRoot, themeId, faviconColor)
-        : { themeId, customCss: pluginCss, faviconColor },
-    );
+    return context.json(await resolveSelectedTheme(themeId, faviconColor));
   });
 
   get(routes.themes, async (context) =>
@@ -279,6 +281,17 @@ export function registerSystemRoutes(
 
   get(routes.providerLogo, async (context) => {
     const providerId = context.req.param("id");
+    // Plugin-registered providers serve the icon snapshot captured at
+    // registration; a disabled plugin's registration (and icon) is gone, so
+    // the app falls back to its vendored brand marks.
+    const registration = deps.providerRegistry.get(providerId);
+    if (registration?.icon !== undefined) {
+      return context.body(new Uint8Array(registration.icon.bytes), 200, {
+        "cache-control": "no-store",
+        "content-type": registration.icon.contentType,
+        "x-content-type-options": "nosniff",
+      });
+    }
     const agent = deps.config.customAcpAgents.find(
       (candidate) =>
         formatCustomAcpAgentProviderId(candidate.id) === providerId,

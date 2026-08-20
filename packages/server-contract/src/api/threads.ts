@@ -1,7 +1,6 @@
 import { z } from "zod";
 import {
   activeThinkingSchema,
-  clientTurnRequestIdSchema,
   callerExecutionInputSourceSchema,
   environmentSchema,
   hostSchema,
@@ -10,11 +9,9 @@ import {
   pendingInteractionSchema,
   permissionModeInputSchema,
   promptInputSchema,
-  providerRateLimitStateSchema,
   reasoningLevelSchema,
-  resolvedThreadExecutionOptionsSchema,
+  rawThreadIdSchema,
   serviceTierSchema,
-  threadChildOriginSchema,
   threadOriginKindSchema,
   threadListEntrySchema,
   threadQueuedMessageSchema,
@@ -23,6 +20,7 @@ import {
   threadTimelineGoalSchema,
   threadTimelineModelFallbackSchema,
   threadTimelinePendingTodosSchema,
+  threadEventTypeValues,
   threadVisibilitySchema,
   threadWithRuntimeSchema,
 } from "@bb/domain";
@@ -41,8 +39,6 @@ import {
   workspaceFileListResponseSchema,
   workspacePathListResponseSchema,
 } from "./shared.js";
-import { promptHistoryResponseSchema } from "./projects.js";
-import { systemExecutionOptionsResponseSchema } from "./system.js";
 
 export const sendMessageModeSchema = z.enum([
   "queue-if-active",
@@ -134,8 +130,6 @@ export const createThreadRequestSchema = z
     sourceSeqEnd: z.number().int().nonnegative().optional(),
     startedOnBehalfOf: startedOnBehalfOfSchema.nullable().default(null),
     originKind: threadOriginKindSchema.nullable().default(null),
-    /** @deprecated Use originKind. */
-    childOrigin: threadChildOriginSchema.nullable().default(null),
   })
   .superRefine((value, ctx) => {
     if (value.origin === "plugin" && value.originPluginId === undefined) {
@@ -152,15 +146,14 @@ export const createThreadRequestSchema = z
         path: ["originPluginId"],
       });
     }
-    const originKind = value.originKind ?? value.childOrigin;
-    if (originKind === null && value.input.length === 0) {
+    if (value.originKind === null && value.input.length === 0) {
       ctx.addIssue({
         code: "custom",
         message: "input must contain at least one entry",
         path: ["input"],
       });
     }
-    if (originKind === null && value.sourceSeqEnd !== undefined) {
+    if (value.originKind === null && value.sourceSeqEnd !== undefined) {
       ctx.addIssue({
         code: "custom",
         message: "sourceSeqEnd requires an originKind",
@@ -218,59 +211,24 @@ export const sendMessageRequestSchema = z.object({
 });
 export type SendMessageRequest = z.infer<typeof sendMessageRequestSchema>;
 
-export const providerRateLimitRecoveryReasonSchema = z.enum([
-  "eligible",
-  "thread-not-failed",
-  "no-failed-turn",
-  "input-not-accepted",
-  "no-rate-limit-state",
-  "no-terminal-rate-limit-error",
-  "provider-will-retry",
-  "manual-only",
-  "output-or-side-effect-observed",
-  "superseded",
-  "execution-unavailable",
-]);
-export type ProviderRateLimitRecoveryReason = z.infer<
-  typeof providerRateLimitRecoveryReasonSchema
->;
-
-export const providerRateLimitRecoveryCandidateSchema = z.object({
-  failedRequestId: clientTurnRequestIdSchema,
-  turnId: z.string().min(1),
-  automatic: z.boolean(),
-  resetsAtMs: z.number().int().nonnegative().nullable(),
-  rateLimits: providerRateLimitStateSchema,
-});
-export type ProviderRateLimitRecoveryCandidate = z.infer<
-  typeof providerRateLimitRecoveryCandidateSchema
->;
-
-export const providerRateLimitRecoveryStatusSchema = z.object({
-  reason: providerRateLimitRecoveryReasonSchema,
-  scopeKey: z.string().min(1),
-  hostId: z.string().min(1),
-  rateLimits: providerRateLimitStateSchema.nullable(),
-  candidate: providerRateLimitRecoveryCandidateSchema.nullable(),
-});
-export type ProviderRateLimitRecoveryStatus = z.infer<
-  typeof providerRateLimitRecoveryStatusSchema
->;
-
-export const continueAfterProviderRateLimitRequestSchema = z
-  .object({ failedRequestId: clientTurnRequestIdSchema })
+export const editMessageRequestSchema = sendMessageRequestSchema
+  .omit({ mode: true })
+  .extend({
+    operationId: z.string().min(1),
+    /** Omission targets the latest editable message with no staleness guard. */
+    expectedRequestSequence: z.number().int().nonnegative().optional(),
+  })
   .strict();
-export type ContinueAfterProviderRateLimitRequest = z.infer<
-  typeof continueAfterProviderRateLimitRequestSchema
->;
+export type EditMessageRequest = z.infer<typeof editMessageRequestSchema>;
 
-export const continueAfterProviderRateLimitResponseSchema = z.object({
-  ok: z.literal(true),
-  requestId: clientTurnRequestIdSchema,
-});
-export type ContinueAfterProviderRateLimitResponse = z.infer<
-  typeof continueAfterProviderRateLimitResponseSchema
->;
+export const editMessageResponseSchema = z
+  .object({
+    ok: z.literal(true),
+    operationId: z.string().min(1),
+    requestSequence: z.number().int().nonnegative(),
+  })
+  .strict();
+export type EditMessageResponse = z.infer<typeof editMessageResponseSchema>;
 
 export const sendQueuedMessageModeSchema = z.enum(["auto", "steer"]);
 export type SendQueuedMessageMode = z.infer<typeof sendQueuedMessageModeSchema>;
@@ -331,6 +289,35 @@ export type SendQueuedMessageResponse = z.infer<
 export const threadListResponseSchema = z.array(threadListEntrySchema);
 export type ThreadListResponse = z.infer<typeof threadListResponseSchema>;
 
+export const THREAD_MENTION_RESOLVE_MAX_IDS = 32;
+
+export const resolveThreadMentionsRequestSchema = z
+  .object({
+    threadIds: z.array(rawThreadIdSchema).max(THREAD_MENTION_RESOLVE_MAX_IDS),
+  })
+  .strict();
+export type ResolveThreadMentionsRequest = z.infer<
+  typeof resolveThreadMentionsRequestSchema
+>;
+
+export const threadMentionResolutionSchema = z
+  .object({
+    threadId: rawThreadIdSchema,
+    projectId: z.string().min(1),
+    label: z.string().min(1),
+  })
+  .strict();
+export type ThreadMentionResolution = z.infer<
+  typeof threadMentionResolutionSchema
+>;
+
+export const resolveThreadMentionsResponseSchema = z.array(
+  threadMentionResolutionSchema,
+);
+export type ResolveThreadMentionsResponse = z.infer<
+  typeof resolveThreadMentionsResponseSchema
+>;
+
 export const threadSearchHighlightRangeSchema = z
   .object({
     start: z.number().int().nonnegative(),
@@ -387,6 +374,7 @@ export type ThreadSearchResponse = z.infer<typeof threadSearchResponseSchema>;
 // be created under it. Computed on the server so clients never recompute the
 // depth cap.
 export const threadResponseSchema = threadWithRuntimeSchema.extend({
+  activeBackgroundAgentCount: z.number().int().nonnegative(),
   canSpawnChild: z.boolean(),
 });
 export type ThreadResponse = z.infer<typeof threadResponseSchema>;
@@ -571,7 +559,13 @@ export const threadOpenResponseSchema = z.object({
 export type ThreadOpenResponse = z.infer<typeof threadOpenResponseSchema>;
 
 /** Presentation action for one thread pane in each connected app window. */
-export const threadPaneActionSchema = z.enum(["maximize", "restore", "toggle"]);
+export const threadPaneActionSchema = z.enum([
+  "maximize",
+  "restore",
+  "toggle",
+  "spotlight",
+  "clear-spotlight",
+]);
 export type ThreadPaneAction = z.infer<typeof threadPaneActionSchema>;
 
 /** Request body for POST /threads/:id/pane-action. */
@@ -611,18 +605,6 @@ export type ThreadPaneActionResponse = z.infer<
   typeof threadPaneActionResponseSchema
 >;
 
-/** @deprecated Compatibility shape for clients that still call composer bootstrap. */
-export const threadComposerBootstrapResponseSchema = z.object({
-  defaultExecutionOptions: resolvedThreadExecutionOptionsSchema.nullable(),
-  queuedMessages: threadQueuedMessageListResponseSchema,
-  executionOptions: systemExecutionOptionsResponseSchema.nullable(),
-  pendingInteractions: threadPendingInteractionsResponseSchema,
-  promptHistory: promptHistoryResponseSchema,
-});
-export type ThreadComposerBootstrapResponse = z.infer<
-  typeof threadComposerBootstrapResponseSchema
->;
-
 export const threadArchiveAllResponseSchema = z.object({
   ok: z.literal(true),
   archivedThreadIds: z.array(z.string().min(1)),
@@ -646,8 +628,6 @@ export const threadListQuerySchema = z.object({
   originKind: threadOriginKindSchema.optional(),
   /** Restrict to threads spawned by this plugin. */
   originPluginId: z.string().min(1).optional(),
-  /** @deprecated Use originKind. */
-  childOrigin: threadChildOriginSchema.optional(),
   /** Include hidden threads; omitted/false keeps the default visible-only list. */
   includeHidden: z.enum(["true", "false"]).optional(),
   limit: z.string().regex(/^\d+$/).optional(),
@@ -733,7 +713,17 @@ export type TimelineTurnSummaryDetailsQuery = z.infer<
 export const threadEventsQuerySchema = z
   .object({
     afterSeq: z.string().regex(/^\d+$/),
+    beforeSeq: z.string().regex(/^\d+$/),
     limit: z.string().regex(/^\d+$/),
+    order: z.enum(["asc", "desc"]),
+    types: z.string().refine(
+      (value) =>
+        isCommaSeparatedIncludeQueryValue({
+          allowedValues: threadEventTypeValues,
+          value,
+        }),
+      "Invalid thread event types",
+    ),
   })
   .partial();
 export type ThreadEventsQuery = z.infer<typeof threadEventsQuerySchema>;

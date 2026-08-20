@@ -56,6 +56,7 @@ export function ParentSelector() {
           <ParentSelectorRow
             thread={makeThread()}
             projectId={baseProps.projectId}
+            parentThreadProjectId={null}
             parentThreadDisplayName={null}
             parentThreads={parentThreads}
             canAssignToParent
@@ -74,6 +75,7 @@ export function ParentSelector() {
           <ParentSelectorRow
             thread={makeThread()}
             projectId={baseProps.projectId}
+            parentThreadProjectId={null}
             parentThreadDisplayName={null}
             parentThreads={[]}
             canAssignToParent={false}
@@ -92,6 +94,7 @@ export function ParentSelector() {
           <ParentSelectorRow
             thread={makeThread({ parentThreadId: "thr_codex_parent" })}
             projectId={baseProps.projectId}
+            parentThreadProjectId={null}
             parentThreadDisplayName="Codex Parent"
             parentThreads={parentThreads}
             canAssignToParent={false}
@@ -110,6 +113,7 @@ export function ParentSelector() {
           <ParentSelectorRow
             thread={makeThread()}
             projectId={baseProps.projectId}
+            parentThreadProjectId={null}
             parentThreadDisplayName={null}
             parentThreads={parentThreads}
             canAssignToParent
@@ -634,6 +638,7 @@ export function GitStatus() {
                 state: "dirty_uncommitted",
                 insertions: 47,
                 deletions: 21,
+                lineStatsComplete: true,
                 files: [
                   {
                     path: "apps/app/src/components/sidebar/ProjectRow.tsx",
@@ -676,6 +681,7 @@ export function GitStatus() {
                 commits: [],
                 insertions: 0,
                 deletions: 0,
+                lineStatsComplete: true,
                 files: [],
               },
             })}
@@ -699,6 +705,7 @@ export function GitStatus() {
                 commits: [],
                 insertions: 0,
                 deletions: 0,
+                lineStatsComplete: true,
                 files: [],
               },
             })}
@@ -722,6 +729,7 @@ export function GitStatus() {
                 commits: [],
                 insertions: 0,
                 deletions: 0,
+                lineStatsComplete: true,
                 files: [],
               },
             })}
@@ -741,6 +749,7 @@ export function GitStatus() {
                 state: "untracked",
                 insertions: 0,
                 deletions: 0,
+                lineStatsComplete: false,
                 files: [
                   {
                     path: "scratch.md",
@@ -842,6 +851,7 @@ export function Commits() {
                 commits: aheadCommits,
                 insertions: 0,
                 deletions: 0,
+                lineStatsComplete: true,
                 files: [],
               },
             })}
@@ -874,6 +884,7 @@ export function ChangedFiles() {
                 state: "dirty_uncommitted",
                 insertions: 47,
                 deletions: 21,
+                lineStatsComplete: true,
                 files: [
                   {
                     path: "apps/app/src/components/sidebar/ProjectRow.tsx",
@@ -914,6 +925,7 @@ export function ChangedFiles() {
                 commits: [],
                 insertions: 110,
                 deletions: 24,
+                lineStatsComplete: true,
                 files: [
                   {
                     path: "apps/app/src/components/right-panel/ThreadMetadataContent.stories.tsx",
@@ -944,6 +956,7 @@ export function ChangedFiles() {
                 state: "dirty_and_committed_unmerged",
                 insertions: 47,
                 deletions: 21,
+                lineStatsComplete: true,
                 files: [
                   {
                     path: "apps/app/src/components/sidebar/ProjectRow.tsx",
@@ -974,6 +987,7 @@ export function ChangedFiles() {
                 commits: [],
                 insertions: 110,
                 deletions: 24,
+                lineStatsComplete: true,
                 files: [
                   {
                     path: "apps/app/src/components/right-panel/ThreadMetadataContent.stories.tsx",

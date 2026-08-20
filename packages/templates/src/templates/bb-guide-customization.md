@@ -26,8 +26,10 @@ app uses ~/.bb/theme/…). The folder name is the theme id.
   bb theme favicon reset         Reset favicon color; preserve the active theme
 
 To author a custom theme, run `bb theme dir`, write <that-dir>/<name>/theme.css,
-then `bb theme set <name>`. The full design-token reference is in the bb-cli
-skill (references/theming.md).
+then `bb theme set <name>`. Optional `pierre-dark.json` / `pierre-light.json`
+(or a `theme.json` `codeTheme` field) ship the matching code colors. Built-in
+palettes use the matching Shiki pair. The full design-token reference is in
+the bb-cli skill (references/theming.md).
 
 Favicon colors are `default`, `red`, `orange`, `yellow`, `green`, `teal`,
 `blue`, `purple`, and `pink`. Theme and favicon-only commands carry the other
@@ -41,20 +43,34 @@ Packaged launcher settings
 but the CLI identifies server and launcher settings that are startup-only,
 including binding/ports, data and the dev-app port, telemetry, inherited skill
 roots, and `BB_FF_*` flags. `BB_LOG_LEVEL` is also startup-only. Use
-`bb-app config`, not `bb-app env`, to change `BB_APP_URL`, `BB_INFERENCE`, or
-`BB_TRANSCRIPTION` live. After a startup-only change, run `bb-app stop && bb-app
-start` or restart the desktop app. Until then, changing or unsetting
-`BB_SERVER_BIND_HOST` does not close a previous `0.0.0.0` listener.
+`bb-app config`, not `bb-app env`, to change `BB_APP_URL`, `BB_INFERENCE`,
+`BB_INFERENCE_FALLBACK`, or `BB_TRANSCRIPTION` live. After a startup-only
+change, run `bb-app stop && bb-app start` or restart the desktop app. Until
+then, changing or unsetting `BB_SERVER_BIND_HOST` does not close a previous
+`0.0.0.0` listener.
+
+With `--server-bind-host 0.0.0.0`, the startup listener and `app` rows show
+`http://0.0.0.0:<port>`. Health checks and the colocated daemon still connect
+through loopback; this does not narrow the IPv4 wildcard listener. Containers
+must also publish the port to the host.
+
+Server helper completions use `BB_INFERENCE` first, then
+`BB_INFERENCE_FALLBACK` after a transient timeout, rate limit, or
+service-unavailable failure. Their defaults are `codex/gpt-5.6-luna` and
+`codex/gpt-5.4-mini`, respectively.
+
+  bb-app config set BB_INFERENCE <provider/model>
+  bb-app config set BB_INFERENCE_FALLBACK <provider/model>
 
 Server-backed General settings
 
 Settings → General includes app-wide preferences stored server-side so every
-window and restart sees the same value. On macOS, the Caffeinate toggle asks the
-primary host daemon to run `/usr/bin/caffeinate -i -w <daemon-pid>`, preventing
-system idle sleep while bb is running; turning it off stops that process. It
-only blocks idle sleep: closing a laptop lid or choosing Sleep manually still
-sleeps the Mac. This setting is only shown when the connected primary host
-daemon reports macOS.
+window and restart sees the same value. Keep Awake is instead owned by its
+builtin plugin: use its autosaving page under Extensions → Plugins or run
+`bb keep-awake enable` or `bb keep-awake disable`. Choose every host with `bb
+keep-awake hosts all`, or name individual host ids after `bb keep-awake hosts`.
+On macOS it prevents system idle sleep while bb is running; closing the lid or
+choosing Sleep still sleeps the Mac.
 
 Settings → Keyboard also includes `showKeyboardHints`, which defaults to true.
 Turn it off to hide the delayed shortcut badges shown while holding Command or
@@ -88,10 +104,18 @@ while the experiment is on.
 
 The `newOnboarding` experiment exposes the first-run agent and project setup
 guide.
-The `toolsHub` experiment exposes Extensions for managing skills and plugins.
-Automations stays in the Plugins section beside threads. It does not enable or
-disable installed skills, automation execution, plugin runtimes, CLI commands,
-or backend APIs.
+The default-on `editMessages` experiment enables editing eligible, accepted
+root user messages in Codex, Claude Code, and Pi threads, including failed or
+incomplete turns; turn it off to hide the editor. Opening the editor is
+client-local; submitting stops and settles a running thread, then replaces the
+selected turn and all later conversation history while retaining workspace side
+effects. Grouped multi-message requests are not yet editable.
+
+The default-off `providerSessionReaping` experiment extends idle release to
+every restorable provider. BB releases those sessions after 30 idle minutes.
+The daemon applies a changed value within five minutes. Active turns, commands,
+agents, workflows, and monitors keep their sessions loaded. BB releases idle
+Codex sessions with the experiment off as well.
 
 Thread timeline windows are bounded by event count as well as user-message
 count (`BB_FF_TIMELINE_WINDOW_EVENT_BUDGET`, default 1500), so a long thread

@@ -10,9 +10,8 @@
 
 [![npm version](https://img.shields.io/npm/v/bb-app.svg)](https://www.npmjs.com/package/bb-app)
 
-bb is an agentic IDE that can control itself. You can seamlessly
-orchestrate all of your favorite coding agents together and have them
-programmatically use bb too.
+bb is an agentic IDE that builds itself. It can control, customize, and automate
+itself, laying the groundwork for your own software factory.
 
 This package provides the `npx bb-app` launcher, bundled `bb` CLI entry, and
 Node SDK export. Every surface — the web app, CLI, and HTTP API — is a
@@ -69,6 +68,22 @@ npx bb-app@nightly
 
 Nightly versions are built from `main` and may be unstable. The `nightly`
 dist-tag moves independently of the stable `latest` tag.
+
+npm 12 and later block dependency install scripts by default. bb needs those
+scripts to build its native add-ons (`better-sqlite3`, `node-pty`,
+`@parcel/watcher`). Without them bb stops at startup with
+`Could not locate the bindings file`. If your npm version is 12 or later, allow
+the scripts for the install:
+
+```bash
+npx --allow-scripts=better-sqlite3,node-pty,@parcel/watcher bb-app@latest
+```
+
+Or set the policy once for all global installs:
+
+```bash
+npm config set allow-scripts=better-sqlite3,node-pty,@parcel/watcher --location=user
+```
 
 `npx bb-app@latest` downloads the published `bb-app` package, starts the server and
 local host daemon, and serves the web app. It stores bb-managed state under
@@ -138,6 +153,14 @@ bb uses whichever providers you have configured. Common providers:
 | `grok`         | Install [Grok Build](https://docs.x.ai/build/overview) and authenticate with `grok login` or `XAI_API_KEY`.                                                                               |
 | `hermes-agent` | Install [Hermes Agent](https://hermes-agent.nousresearch.com/docs/getting-started/installation), configure credentials with `hermes model`, then verify ACP with `hermes acp --check`.    |
 
+BB indexes the documented native skill roots for Codex, Claude Code, Pi,
+Cursor, OpenCode, omp, Grok Build, and Hermes Agent. It includes user roots,
+project roots, and compatibility roots such as `.agents/skills`. These skills
+appear in the selected provider's `/` command menu. The Skills page and
+`bb skill list` show native skills for Claude Code, Codex, and Cursor. BB also
+reads configured Pi, omp, Grok, and Hermes skill directories, plus enabled
+provider plugin skills.
+
 BB reads Pi's global `~/.pi/agent` files and each workspace's `.pi` files.
 This includes settings, credentials, models, packages, extensions, skills,
 prompts, themes, and context files. Pi extensions can add models and tools.
@@ -152,6 +175,13 @@ Custom ACP agents can be configured through `customAcpAgents` in
 `nativeReasoning` reasoning
 settings. A `logo`
 field accepts an SVG, PNG, or WebP path for the provider picker icon.
+The optional `nativeSkillRoots` field adds provider-native skills to the
+composer. Its `user` paths resolve from the target host home directory. Its
+`project` paths resolve from the selected workspace.
+Top-level `sharedSkillRoots` uses the same `user` and `project` path format.
+BB lists these sources as read-only skills. BB injects them into Codex, Claude,
+Pi, and ACP threads. This permits one physical skill collection for BB and a
+standalone provider CLI.
 
 ## Configuration
 
@@ -161,6 +191,7 @@ Use `bb-app config` for persistent non-secret package settings under
 ```bash
 npx bb-app config set BB_APP_URL https://<machine>.<tailnet>.ts.net
 npx bb-app config set BB_INFERENCE codex/gpt-5.6-luna
+npx bb-app config set BB_INFERENCE_FALLBACK codex/gpt-5.4-mini
 npx bb-app config set BB_TRANSCRIPTION codex/gpt-transcribe
 npx bb-app config list
 npx bb-app config refresh

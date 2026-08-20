@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import semver from "semver";
 import type { PromptInput } from "@bb/domain";
 import type { HostDaemonCommandResult } from "@bb/host-daemon-contract";
 import { resolveContainedPath } from "@bb/process-utils";
@@ -6,6 +7,7 @@ import type { RuntimeEntry } from "../runtime-manager.js";
 import {
   CommandDispatchError,
   ExpectedCommandDispatchError,
+  resolveRuntimeBridgeLaunch,
   type CommandDispatchOptions,
   type CommandOf,
 } from "../command-dispatch-support.js";
@@ -24,6 +26,7 @@ type ExistingThreadRuntimeCommand =
 interface ResumeThreadRuntimeIfMissingArgs {
   command: ExistingThreadRuntimeCommand;
   entry: RuntimeEntry;
+  options: CommandDispatchOptions;
 }
 
 interface StageThreadCommandInputArgs {
@@ -43,9 +46,11 @@ interface StagedThreadCommandInput {
 }
 
 interface RequireSupportedProviderCliArgs {
-  command: CommandOf<"thread.start">;
+  command: CommandOf<"thread.start"> | CommandOf<"thread.rewind.prepare">;
   options: CommandDispatchOptions;
 }
+
+const CODEX_REWIND_MINIMUM_SUPPORTED_VERSION = "0.143.0";
 
 function requireConfinedPath(rootPath: string, candidatePath: string): string {
   const resolved = resolveContainedPath({
@@ -100,17 +105,29 @@ async function requireSupportedProviderCliForThreadStart({
     (await getProviderCliStatusForProvider("codex", {
       env: options.runtimeManager.getShellEnv(),
     }));
-  if (!status.versionUnsupported) {
+  const minimumVersion =
+    command.type === "thread.rewind.prepare"
+      ? CODEX_REWIND_MINIMUM_SUPPORTED_VERSION
+      : status.minimumSupportedVersion;
+  const versionUnsupported =
+    command.type === "thread.rewind.prepare"
+      ? status.currentVersion === null ||
+        !semver.gte(
+          status.currentVersion,
+          CODEX_REWIND_MINIMUM_SUPPORTED_VERSION,
+        )
+      : status.versionUnsupported;
+  if (!versionUnsupported) {
     return;
   }
 
   const currentVersion = status.currentVersion
     ? ` ${status.currentVersion}`
     : "";
-  const minimumVersion = status.minimumSupportedVersion ?? "a newer version";
+  const requiredVersion = minimumVersion ?? "a newer version";
   throw new ExpectedCommandDispatchError(
     "provider_cli_unsupported_version",
-    `Codex${currentVersion} is too old for this bb version. Update Codex to ${minimumVersion} or newer.`,
+    `Codex${currentVersion} is too old for this operation. Update Codex to ${requiredVersion} or newer.`,
   );
 }
 
@@ -153,7 +170,7 @@ async function stageThreadCommandInput(
 async function resumeThreadRuntimeIfMissing(
   args: ResumeThreadRuntimeIfMissingArgs,
 ): Promise<void> {
-  const { command, entry } = args;
+  const { command, entry, options } = args;
   const { resumeContext } = command;
   if (entry.runtime.hasThread(command.threadId)) {
     return;
@@ -164,12 +181,17 @@ async function resumeThreadRuntimeIfMissing(
       `No provider thread id available for thread ${command.threadId}`,
     );
   }
+  const bridgeLaunch = await resolveRuntimeBridgeLaunch(
+    command.resumeContext.bridgeLaunch ?? command.bridgeLaunch,
+    options,
+  );
   await entry.runtime.resumeThread({
     ...(command.resumeContext.acpLaunchSpec !== undefined
       ? { acpLaunchSpec: command.resumeContext.acpLaunchSpec }
       : command.acpLaunchSpec !== undefined
         ? { acpLaunchSpec: command.acpLaunchSpec }
         : {}),
+    bridgeLaunch,
     environmentId: command.environmentId,
     threadId: command.threadId,
     projectId: resumeContext.projectId,
@@ -203,6 +225,10 @@ export async function startThread(
     threadStorageRootPath: options.threadStorageRootPath,
   });
   try {
+    const bridgeLaunch = await resolveRuntimeBridgeLaunch(
+      command.bridgeLaunch,
+      options,
+    );
     const entry = await requireResolvedWorkspaceForCommand({
       dataDir: options.dataDir,
       environmentId: command.environmentId,
@@ -215,6 +241,7 @@ export async function startThread(
       ...(command.acpLaunchSpec !== undefined
         ? { acpLaunchSpec: command.acpLaunchSpec }
         : {}),
+      bridgeLaunch,
       environmentId: command.environmentId,
       threadId: command.threadId,
       projectId: command.projectId,
@@ -237,6 +264,55 @@ export async function startThread(
     await cleanupAfterPostStagingFailure(staged.cleanup);
     throw error;
   }
+}
+
+export async function prepareThreadRewind(
+  command: CommandOf<"thread.rewind.prepare">,
+  options: CommandDispatchOptions,
+): Promise<HostDaemonCommandResult<"thread.rewind.prepare">> {
+  await requireSupportedProviderCliForThreadStart({ command, options });
+  const bridgeLaunch = await resolveRuntimeBridgeLaunch(
+    command.bridgeLaunch,
+    options,
+  );
+  const entry = await requireResolvedWorkspaceForCommand({
+    dataDir: options.dataDir,
+    environmentId: command.environmentId,
+    injectedSkillSources: command.injectedSkillSources,
+    runtimeManager: options.runtimeManager,
+    targetThreadId: command.threadId,
+    workspaceContext: command.workspaceContext,
+  });
+  return entry.runtime.prepareThreadRewind({
+    ...(command.acpLaunchSpec !== undefined
+      ? { acpLaunchSpec: command.acpLaunchSpec }
+      : {}),
+    bridgeLaunch,
+    environmentId: command.environmentId,
+    threadId: command.threadId,
+    leaseId: command.leaseId,
+    projectId: command.projectId,
+    providerId: command.providerId,
+    sourceProviderThreadId: command.sourceProviderThreadId,
+    retainThroughProviderCheckpoint: command.retainThroughProviderCheckpoint,
+    options: command.options,
+    instructions: command.instructions,
+    dynamicTools: command.dynamicTools,
+    disallowedTools: command.disallowedTools,
+    instructionMode: command.instructionMode,
+  });
+}
+
+export async function discardThreadRewind(
+  command: CommandOf<"thread.rewind.discard">,
+  options: CommandDispatchOptions,
+): Promise<HostDaemonCommandResult<"thread.rewind.discard">> {
+  const entry = await options.runtimeManager.getOrAwait(command.environmentId);
+  if (!entry) {
+    return {};
+  }
+  await entry.runtime.discardThreadRewind({ leaseId: command.leaseId });
+  return {};
 }
 
 export async function ensureThreadRuntime(
@@ -269,7 +345,7 @@ export async function ensureThreadRuntime(
       `Thread ${command.threadId} still runs a turn in environment ${busyEnvironmentId}`,
     );
   }
-  await resumeThreadRuntimeIfMissing({ command, entry });
+  await resumeThreadRuntimeIfMissing({ command, entry, options });
   return entry;
 }
 
@@ -341,7 +417,11 @@ export async function submitTurn(
       : {}),
   };
   try {
-    await resumeThreadRuntimeIfMissing({ command: stagedCommand, entry });
+    await resumeThreadRuntimeIfMissing({
+      command: stagedCommand,
+      entry,
+      options,
+    });
     switch (command.target.mode) {
       case "start":
         return await runSubmittedTurn(stagedCommand, entry);

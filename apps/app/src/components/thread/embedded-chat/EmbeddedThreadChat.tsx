@@ -535,6 +535,7 @@ function EmbeddedThreadChatWithComposer({
     projectId,
     providerId,
     environmentId: promptContextEnvironmentId,
+    commandScope: threadId === null ? "new-thread" : "thread",
     currentThreadId: threadId ?? composer.executionDefaultsThreadId,
     selectedProviderComposerActions,
     resolveMentionLink,
@@ -753,12 +754,13 @@ function EmbeddedThreadChatWithComposer({
     void handleSaveInlineQueuedMessage();
   }, [handleSaveInlineQueuedMessage]);
 
+  const addQuoteToPromptDraft = promptDraft.addQuote;
   const handleAddToChat = useCallback<ThreadTimelineAddToChatHandler>(
     (text, attachments) => {
-      promptDraft.addQuote(text, attachments);
+      addQuoteToPromptDraft(text, attachments);
       setComposerFocusNonce((nonce) => nonce + 1);
     },
-    [promptDraft],
+    [addQuoteToPromptDraft],
   );
 
   // ---- Plugin composer host --------------------------------------------------

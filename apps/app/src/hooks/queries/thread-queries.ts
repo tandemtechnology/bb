@@ -6,7 +6,7 @@ import {
 } from "@tanstack/react-query";
 import { useCallback, useMemo } from "react";
 import { useDebounceValue } from "usehooks-ts";
-import type { PendingInteraction, ThreadWithRuntime } from "@bb/domain";
+import type { PendingInteraction, ThreadListEntry } from "@bb/domain";
 import type {
   PromptHistoryResponse,
   ThreadQueuedMessageListResponse,
@@ -363,6 +363,41 @@ export function useThreads(filters: UseThreadsFilters, options?: QueryOptions) {
   });
 }
 
+interface UseChildThreadsArgs {
+  enabled: boolean;
+  parentThreadId: string | undefined;
+}
+
+/**
+ * Live children of one parent across every project. A child may live in a
+ * different project than its parent, so this list is keyed by parent only and
+ * never derived from a project-scoped thread list.
+ */
+export function useChildThreads({
+  enabled: enabledOption,
+  parentThreadId,
+}: UseChildThreadsArgs) {
+  const enabled = enabledOption && Boolean(parentThreadId);
+  useThreadListRealtimeSubscription({ enabled });
+  return useQuery<ThreadListResponse>({
+    queryKey:
+      enabled && parentThreadId
+        ? threadListQueryKey({ archived: false, parentThreadId })
+        : disabledThreadListQueryKey({ archived: false }),
+    queryFn: ({ signal }) =>
+      sdk.threads.list({
+        archived: false,
+        parentThreadId: requireThreadId(
+          parentThreadId ?? "",
+          "useChildThreads",
+        ),
+        signal,
+      }),
+    enabled,
+    staleTime: THREAD_LIST_STALE_TIME_MS,
+  });
+}
+
 export function useProjectThreadSubset({
   enabled: enabledOption,
   filters,
@@ -542,12 +577,16 @@ export function useThread(id: string, options?: QueryOptions) {
 // placeholder; the real single-thread response, which carries the server-
 // computed value, resolves moments later.
 function liftThreadListPlaceholder(
-  thread: ThreadWithRuntime | undefined,
+  thread: ThreadListEntry | undefined,
 ): ThreadResponse | undefined {
   if (thread === undefined) {
     return undefined;
   }
-  return { ...thread, canSpawnChild: false };
+  return {
+    ...thread,
+    activeBackgroundAgentCount: thread.activity.activeBackgroundAgentCount,
+    canSpawnChild: false,
+  };
 }
 
 export function useThreadDetailBootstrap(
