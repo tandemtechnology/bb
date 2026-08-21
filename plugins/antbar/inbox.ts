@@ -1,4 +1,4 @@
-import type { PluginSidebarThread } from "@bb/plugin-sdk";
+import type { PluginSidebarThread } from "@get-bb/plugin-sdk";
 import { indexThreads } from "./thread-family.ts";
 
 export interface InboxProjection {

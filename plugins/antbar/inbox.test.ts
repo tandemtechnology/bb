@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { PluginSidebarThread } from "@bb/plugin-sdk";
+import type { PluginSidebarThread } from "@get-bb/plugin-sdk";
 import { projectInbox, sortThreads, threadTitle } from "./inbox.ts";
 
 function thread(

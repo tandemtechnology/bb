@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { PromptInput } from "@bb/domain";
 import {
-  deriveBranchSlugFromTitle,
+  sanitizeGeneratedBranchSlug,
   deriveTitleFallback,
   deriveTitleGenerationContext,
   sanitizeGeneratedTitle,
@@ -58,9 +58,10 @@ describe("thread title generation", () => {
   });
 
   it("derives branch slugs from the chosen title text", () => {
-    expect(deriveBranchSlugFromTitle("Fix Login Flow")).toBe("fix-login-flow");
+    expect(sanitizeGeneratedBranchSlug("Fix Login Flow")).toBe(
+      "fix-login-flow",
+    );
   });
-
   it("keeps fallback derivation independent from title generation eligibility", () => {
     const input = [textInput("fix bug")];
 

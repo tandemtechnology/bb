@@ -1,12 +1,17 @@
 import path from "node:path";
-import type { GitBranchRefClassification } from "@bb/domain";
+import type {
+  GitBranchRefClassification,
+  WorkspaceGitOperation,
+} from "@bb/domain";
 import {
   detectGitRepo,
+  detectGitRepoKind,
   fetchRemoteBranches,
   getCheckoutRef,
   getGitCommonDir,
   getWorkspaceGitOperation,
   hasUncommittedChanges,
+  listBranchRefsWithDefaults,
   listBranches,
   listRemoteBranches,
   readDefaultBranchRefs,
@@ -37,8 +42,16 @@ interface ClassifySelectedBranchArgs {
   selectedBranch?: string;
 }
 
+interface ReadBranchOptionsArgs {
+  path: string;
+  limit: number;
+  query?: string;
+  selectedBranch?: string;
+}
+
 const REMOTE_BRANCH_FETCH_THROTTLE_MS = 30_000;
 const REMOTE_BRANCH_FETCH_TIMEOUT_MS = 5_000;
+const NO_GIT_OPERATION: WorkspaceGitOperation = { kind: "none" };
 
 const remoteBranchFetchStateByCommonDir = new Map<
   string,
@@ -130,6 +143,73 @@ async function refreshRemoteBranches(cwd: string): Promise<void> {
   await inFlight;
 }
 
+async function readBranchOptions({
+  path: cwd,
+  limit,
+  query,
+  selectedBranch: requestedBranch,
+}: ReadBranchOptionsArgs): Promise<
+  HostDaemonOnlineRpcResult<"host.list_branch_options">
+> {
+  const { branches, defaultBranch, originDefaultBranch, remoteBranches } =
+    await listBranchRefsWithDefaults(cwd);
+  const limitedBranches = limitBranchList({
+    branches: pinBranch({ branches, branch: defaultBranch }),
+    limit,
+    query,
+  });
+  const limitedRemoteBranches = limitBranchList({
+    branches: pinBranch({
+      branches: remoteBranches,
+      branch: originDefaultBranch,
+    }),
+    limit,
+    query,
+  });
+  return {
+    branches: limitedBranches.branches,
+    branchesTruncated: limitedBranches.truncated,
+    remoteBranches: limitedRemoteBranches.branches,
+    remoteBranchesTruncated: limitedRemoteBranches.truncated,
+    selectedBranch: classifySelectedBranch({
+      branches,
+      remoteBranches,
+      selectedBranch: requestedBranch,
+    }),
+  };
+}
+
+export async function listHostBranchOptions(
+  command: CommandOf<"host.list_branch_options">,
+): Promise<HostDaemonOnlineRpcResult<"host.list_branch_options">> {
+  if (!path.isAbsolute(command.path)) {
+    throw new CommandDispatchError("invalid_path", "Path must be absolute");
+  }
+
+  if (!(await detectGitRepo(command.path))) {
+    return {
+      branches: [],
+      branchesTruncated: false,
+      remoteBranches: [],
+      remoteBranchesTruncated: false,
+      selectedBranch: classifySelectedBranch({
+        branches: [],
+        remoteBranches: [],
+        selectedBranch: command.selectedBranch,
+      }),
+    };
+  }
+
+  if (command.remoteRefresh === "background") {
+    // Return cached refs immediately. A successful fetch updates shared Git
+    // refs, whose workspace watcher event invalidates the observed picker
+    // query so the refreshed options arrive without blocking this response.
+    void refreshRemoteBranches(command.path).catch(() => undefined);
+  }
+
+  return readBranchOptions(command);
+}
+
 export async function listHostBranches(
   command: CommandOf<"host.list_branches">,
 ): Promise<HostDaemonOnlineRpcResult<"host.list_branches">> {
@@ -137,7 +217,11 @@ export async function listHostBranches(
     throw new CommandDispatchError("invalid_path", "Path must be absolute");
   }
 
-  if (!(await detectGitRepo(command.path))) {
+  // A project source can be a bare repository whose checkouts are sibling
+  // worktrees (`<root>/.bare` + `<root>/.git` gitdir file). It has refs and
+  // can seed new worktrees, but has no work tree to be dirty or mid-operation.
+  const repoKind = await detectGitRepoKind(command.path);
+  if (repoKind === "none") {
     return {
       branches: [],
       branchesTruncated: false,
@@ -165,8 +249,10 @@ export async function listHostBranches(
       listRemoteBranches(command.path),
       getCheckoutRef(command.path),
       readDefaultBranchRefs(command.path),
-      hasUncommittedChanges(command.path),
-      getWorkspaceGitOperation(command.path),
+      repoKind === "work-tree" ? hasUncommittedChanges(command.path) : false,
+      repoKind === "work-tree"
+        ? getWorkspaceGitOperation(command.path)
+        : NO_GIT_OPERATION,
     ]);
   const defaultBranch = defaultRefs.defaultBranch;
   const originDefaultBranch = defaultRefs.originDefaultBranch;

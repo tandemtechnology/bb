@@ -42,15 +42,15 @@ provider's global configuration.
 
 Subscription limit recovery
 
-The opt-in builtin Provider retry plugin recognizes structured Codex and Claude
-Code subscription windows. Enable it under Extensions → Plugins or run
-`bb plugin enable provider-retry`. If a provider terminally rejects an accepted
-turn whose execution settings remain available, the plugin waits in memory
-until the reported reset plus a short buffer, then starts one agent-only
-`Please continue.` turn on the existing provider conversation. Prior output or
-tool activity does not block recovery. Threads sharing a machine/provider
-subscription are released one at a time. Provider-native retries remain
-authoritative while the provider reports that it will retry on its own.
+The builtin Provider retry plugin is enabled on fresh installations and
+recognizes structured Codex and Claude Code subscription windows. If a provider
+terminally rejects an accepted turn whose execution settings remain available,
+the plugin waits in memory until the reported reset plus a short buffer, then
+starts one agent-only `Please continue.` turn on the existing provider
+conversation. Prior output or tool activity does not block recovery. Threads
+sharing a machine/provider subscription are released one at a time.
+Provider-native retries remain authoritative while the provider reports that
+it will retry on its own.
 
 Automatic waits default to a maximum of six hours. Longer reset windows are not
 scheduled. Set `maximumWait` to `24 hours` or `No limit` under the plugin
@@ -107,12 +107,15 @@ in the model picker, but the provider must still accept the id: claude-code
 and codex accept unlisted ids, while an ACP agent can reject an id it does
 not know at session start. OpenCode rejects unlisted ids, so add an OpenCode
 model to the OpenCode config instead. Like customAcpAgents, edit the JSON and
-run bb-app config refresh; there is no set/unset CLI surface.
+run bb-app config refresh; there is no set/unset CLI surface. The streamerMode
+General setting hides every entry from these lists; see the customization
+chapter.
 
 Custom ACP agents are configured in the app data-dir config.json under
 customAcpAgents. bb derives provider id acp-<id> from each slug id. Edit the JSON
 and run bb-app config refresh; there is no set/unset CLI surface for this list.
-Custom config wins if it uses the same provider id as a known ACP agent; for
+Custom config wins if it uses the same provider id as an installed-only ACP
+plugin provider; for
 example, override acp-opencode with id opencode. Set modelDiscovery to none
 for gateway agents that manage their own model and should not be launched for
 picker discovery. Set mcpServers to none when a gateway rejects per-session MCP

@@ -1,9 +1,6 @@
 import { useCallback, useMemo, useSyncExternalStore } from "react";
 import type { PromptTextMention } from "@bb/domain";
-import type {
-  PromptDraftAttachment,
-  PromptDraftState,
-} from "@/lib/prompt-draft";
+import type { PromptDraftAttachment, PromptDraftState } from "@bb/client-core";
 import {
   appendQuoteAndAttachmentsToDraft,
   arePromptDraftStatesEqual,
@@ -11,7 +8,7 @@ import {
   isPromptDraftEmpty,
   parsePromptDraftStorage,
   serializePromptDraftStorage,
-} from "@/lib/prompt-draft";
+} from "@bb/client-core";
 
 const PROMPT_DRAFT_STORAGE_PREFIX = "bb.promptbox.contents";
 const PROMPT_DRAFT_STORAGE_VERSION = "3";
@@ -473,7 +470,7 @@ export function usePromptDraftHasInput(scope: PromptDraftScope): boolean {
   );
 }
 
-export interface PromptDraftThreadRef {
+interface PromptDraftThreadRef {
   id: string;
   projectId: string;
 }
@@ -481,6 +478,67 @@ export interface PromptDraftThreadRef {
 interface PromptDraftThreadSubscription {
   storageKey: string;
   threadId: string;
+}
+
+function getEmptyPresenceSnapshot(): string {
+  return "";
+}
+
+function readPromptDraftPresenceBit(storageKey: string): "0" | "1" {
+  return isPromptDraftEmpty(readPromptDraft(storageKey)) ? "0" : "1";
+}
+
+/**
+ * Presence bit-string store for one subscription set. `getSnapshot` runs on
+ * every render of the subscribing component (the sidebar), and a change to
+ * one draft notifies once per keystroke; reading localStorage for every
+ * sidebar thread on each of those was N `getItem` calls per keystroke and per
+ * sidebar render. The store caches the joined bits, re-reads only the key
+ * that changed, and stays silent when that key's presence did not flip.
+ */
+function createPromptDraftPresenceStore(
+  subscriptions: readonly PromptDraftThreadSubscription[],
+): {
+  subscribe: (listener: () => void) => () => void;
+  getSnapshot: () => string;
+} {
+  let bits: ("0" | "1")[] | null = null;
+  let snapshot: string | null = null;
+  const refresh = (): string => {
+    bits = subscriptions.map(({ storageKey }) =>
+      readPromptDraftPresenceBit(storageKey),
+    );
+    snapshot = bits.join("");
+    return snapshot;
+  };
+  return {
+    getSnapshot: () => snapshot ?? refresh(),
+    subscribe: (listener) => {
+      // A draft may have flipped between the render that computed `snapshot`
+      // and this subscription; drop the cache so the post-subscribe
+      // `getSnapshot` re-reads instead of returning the stale string.
+      snapshot = null;
+      bits = null;
+      const unsubscribe = subscriptions.map(({ storageKey }, index) =>
+        subscribePromptDraft(storageKey, () => {
+          const bit = readPromptDraftPresenceBit(storageKey);
+          if (bits !== null && bits[index] === bit) return;
+          if (bits === null) {
+            refresh();
+          } else {
+            bits[index] = bit;
+            snapshot = bits.join("");
+          }
+          listener();
+        }),
+      );
+      return () => {
+        for (const stopListening of unsubscribe) {
+          stopListening();
+        }
+      };
+    },
+  };
 }
 
 /**
@@ -509,30 +567,14 @@ export function usePromptDraftInputThreadIds(
     return next;
   }, [threads]);
 
+  const presenceStore = useMemo(
+    () => createPromptDraftPresenceStore(subscriptions),
+    [subscriptions],
+  );
   const presenceSnapshot = useSyncExternalStore(
-    useCallback(
-      (listener) => {
-        const unsubscribe = subscriptions.map(({ storageKey }) =>
-          subscribePromptDraft(storageKey, listener),
-        );
-        return () => {
-          for (const stopListening of unsubscribe) {
-            stopListening();
-          }
-        };
-      },
-      [subscriptions],
-    ),
-    useCallback(
-      () =>
-        subscriptions
-          .map(({ storageKey }) =>
-            isPromptDraftEmpty(readPromptDraft(storageKey)) ? "0" : "1",
-          )
-          .join(""),
-      [subscriptions],
-    ),
-    () => "",
+    presenceStore.subscribe,
+    presenceStore.getSnapshot,
+    getEmptyPresenceSnapshot,
   );
 
   return useMemo(() => {

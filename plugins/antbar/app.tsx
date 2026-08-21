@@ -21,13 +21,13 @@ import {
   useBbNavigate,
   useRealtime,
   useRpc,
-} from "@bb/plugin-sdk/app";
+} from "@get-bb/plugin-sdk/app";
 import type {
   NewThreadRequest,
   PluginNavPanelProps,
   PluginSidebarThread,
   PluginThreadListProps,
-} from "@bb/plugin-sdk/app";
+} from "@get-bb/plugin-sdk/app";
 import type { rpcContract } from "./server";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";

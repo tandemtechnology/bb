@@ -10,6 +10,7 @@ import { TextSelection } from "@tiptap/pm/state";
 import { useEditor, type Editor } from "@tiptap/react";
 import {
   useCallback,
+  useContext,
   useEffect,
   useImperativeHandle,
   useLayoutEffect,
@@ -24,6 +25,8 @@ import {
   type Ref,
 } from "react";
 import {
+  commandPillDismissedRangeEnd,
+  findActiveTrigger,
   orderCommandSuggestions,
   type ActiveTrigger,
   type CommandMenuState,
@@ -33,17 +36,21 @@ import {
   type PromptMentionSuggestion,
   type TypeaheadMenuState,
   type TypeaheadTrigger,
-} from "@/components/promptbox/mentions/types";
+} from "@bb/client-core";
 import { AppCommandShortcutHint } from "@/components/commands/AppCommandShortcutHint";
 import {
   useAppCommandKeyDispatch,
   useAppCommandShortcut,
 } from "@/components/commands/AppCommandProvider";
-import { commandPillDismissedRangeEnd } from "@/components/promptbox/mentions/command-trigger";
-import { findActiveTrigger } from "@/components/promptbox/mentions/find-active-trigger";
 import { canLoadMoreCommandResults } from "@/components/promptbox/mentions/mention-menu-scroll";
 import { Button } from "@bb/shared-ui/button";
 import { Icon } from "@bb/shared-ui/icon";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@bb/shared-ui/tooltip";
 import { ComposerActionsSlot } from "@/components/plugin/PluginComposerActions";
 import { useResolvedComposerEditor } from "@/components/plugin/composer-slot-hooks";
 import {
@@ -68,14 +75,14 @@ import { createJsonLocalStorage } from "@/lib/browser-storage";
 import {
   DEFAULT_PLUGIN_MENTION_TRIGGER,
   type PluginMentionTrigger,
-} from "@/lib/plugin-mention-triggers";
+} from "@bb/client-core";
 import { useRichTextEditingPreference } from "@/lib/rich-text-editing-preference";
 import {
   arePromptDraftStatesEqual,
   isPromptDraftEmpty,
   type PromptDraftAttachment,
   type PromptDraftState,
-} from "@/lib/prompt-draft";
+} from "@bb/client-core";
 import { cn } from "@bb/shared-ui/lib/utils";
 import { AttachmentPreview } from "./AttachmentPreview";
 import { VoiceRecordingBar } from "./VoiceRecordingBar";
@@ -113,7 +120,7 @@ import { applyPromptParagraphNewline } from "./editor/prompt-editor-paragraph";
 import { MentionMenu, type TypeaheadSuggestion } from "./mentions/MentionMenu";
 import { parsePromptMentionClipboardElement } from "./mentions/prompt-mention-clipboard";
 import { ComposerEditorSlot } from "./ComposerEditorSlot";
-import { useQueuedEditorTypeaheadLayoutReporter } from "./queued-editor-typeahead-layout";
+import { QueuedEditorTypeaheadLayoutContext } from "./queued-editor-typeahead-layout";
 
 const PROMPTBOX_MIN_HEIGHT = 68;
 const PROMPTBOX_SELECTION_REVEAL_MARGIN = 12;
@@ -211,10 +218,76 @@ function shouldFinishVoiceCompletionTransitionImmediately(): boolean {
 export interface PromptBoxSubmissionConfig {
   isSubmitting?: boolean;
   disabled?: boolean;
+  /** Explains why submission is disabled. Shown on hover and used as the action's accessible label. */
+  disabledReason?: string;
   title?: string;
   isRunning?: boolean;
   onStop?: () => void;
   onModifierSubmit?: () => void;
+}
+
+interface PromptSubmitButtonProps {
+  canSubmit: boolean;
+  className: string;
+  disabledReason: string | undefined;
+  isCompact: boolean;
+  isSubmitting: boolean;
+  isZenMode: boolean;
+  onClick: (event: ReactMouseEvent<HTMLButtonElement>) => void;
+  onPointerDown: (event: ReactPointerEvent<HTMLButtonElement>) => void;
+  title: string;
+}
+
+function PromptSubmitButton({
+  canSubmit,
+  className,
+  disabledReason,
+  isCompact,
+  isSubmitting,
+  isZenMode,
+  onClick,
+  onPointerDown,
+  title,
+}: PromptSubmitButtonProps) {
+  const button = (
+    <Button
+      data-promptbox-submit-action=""
+      type="submit"
+      size={isCompact ? "icon" : "sm"}
+      variant="default"
+      aria-label={title}
+      disabled={!canSubmit}
+      onPointerDown={onPointerDown}
+      onClick={onClick}
+      className={className}
+    >
+      {isSubmitting ? (
+        <Icon name="Spinner" className="size-4 animate-spin" />
+      ) : isZenMode ? (
+        <Icon name="ArrowUp" className="size-4" />
+      ) : (
+        <Icon name="CornerDownLeft" className="size-4" />
+      )}
+    </Button>
+  );
+
+  if (!disabledReason) return button;
+
+  return (
+    <TooltipProvider delayDuration={300}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span
+            data-promptbox-submit-disabled-reason=""
+            className="inline-flex shrink-0"
+          >
+            {button}
+          </span>
+        </TooltipTrigger>
+        <TooltipContent side="top">{disabledReason}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
 }
 
 /**
@@ -260,6 +333,11 @@ export interface TypeaheadCommandConfig {
   loadMore: () => void;
   /** Called whenever the active command query changes; null when no command trigger is active. */
   onQueryChange: (query: string | null) => void;
+  /**
+   * Called when the editor gains focus. Hosts use it to warm the command
+   * catalog before the first trigger char (see `useCommandSuggestions`).
+   */
+  onEditorFocus?: () => void;
 }
 
 /**
@@ -299,14 +377,14 @@ export interface AttachmentsConfig {
   projectId?: string;
 }
 
-export interface PromptBoxZenModeConfig {
+interface PromptBoxZenModeConfig {
   layout?: ZenModeLayout;
   storageKey?: string | null;
   resetKey?: string | number;
   resetOnSubmit?: boolean;
 }
 
-export interface PromptBoxCompactConfig {
+interface PromptBoxCompactConfig {
   isCompact: boolean;
   placeholder?: string;
 }
@@ -318,7 +396,7 @@ export interface HistoryConfig {
   resetKey?: string | number;
 }
 
-export type PromptVoiceState = "idle" | "recording" | "transcribing" | "error";
+type PromptVoiceState = "idle" | "recording" | "transcribing" | "error";
 
 export interface PromptVoiceConfig {
   state: PromptVoiceState;
@@ -344,9 +422,9 @@ export interface PromptBoxHandle {
 
 export type { PromptBoxAction } from "./PromptBoxActionsMenu";
 
-export type MentionMenuPlacement = "top" | "bottom";
+type MentionMenuPlacement = "top" | "bottom";
 
-export interface PromptBoxInternalProps {
+interface PromptBoxInternalProps {
   id?: string;
   value: string;
   mentionRanges: readonly PromptTextMention[];
@@ -419,7 +497,7 @@ interface DismissedTriggerRange {
   hasLeftRange: boolean;
 }
 
-export interface PromptEditorValueKey {
+interface PromptEditorValueKey {
   text: string;
   mentions: readonly PromptTextMention[];
 }
@@ -828,9 +906,13 @@ function revealPromptEditorSelection({
   const scrollContainerRect = scrollContainer.getBoundingClientRect();
   if (scrollContainerRect.height <= 0) return;
 
+  // Reveal the head, not `to`. While the user drags or Shift+Arrows a
+  // selection upward, the anchor stays below and `to` is the anchor. The
+  // browser autoscrolls toward the head; revealing `to` scrolled back toward
+  // the anchor on every selection update and the prompt jittered.
   let selectionRect: ReturnType<Editor["view"]["coordsAtPos"]>;
   try {
-    selectionRect = editor.view.coordsAtPos(editor.state.selection.to);
+    selectionRect = editor.view.coordsAtPos(editor.state.selection.head);
   } catch {
     return;
   }
@@ -1170,6 +1252,7 @@ export function PromptBoxInternal({
   const {
     isSubmitting = false,
     disabled: submitDisabled = false,
+    disabledReason: submitDisabledReason,
     title: submitTitle = "Submit (Enter)",
     isRunning = false,
     onStop,
@@ -1189,7 +1272,12 @@ export function PromptBoxInternal({
     isLoading: commandLoading,
     isError: commandError,
     onQueryChange: onCommandQueryChange,
+    onEditorFocus: onCommandEditorFocus,
   } = typeahead.command;
+  const onCommandEditorFocusRef = useRef(onCommandEditorFocus);
+  useEffect(() => {
+    onCommandEditorFocusRef.current = onCommandEditorFocus;
+  }, [onCommandEditorFocus]);
   const {
     items: attachments = [],
     isAttaching = false,
@@ -1215,8 +1303,9 @@ export function PromptBoxInternal({
   const shouldAvoidSoftKeyboardAutofocus = isPointerCoarse;
   const formRef = useRef<HTMLFormElement>(null);
   const typeaheadMenuRef = useRef<HTMLDivElement>(null);
-  const reportQueuedEditorTypeaheadLayout =
-    useQueuedEditorTypeaheadLayoutReporter();
+  const reportQueuedEditorTypeaheadLayout = useContext(
+    QueuedEditorTypeaheadLayoutContext,
+  );
   const blurAfterPointerSubmitRef = useRef(false);
   const heightAnimationFromRef = useRef<number | null>(null);
   const capturePromptBoxHeight = useCallback(() => {
@@ -1698,6 +1787,10 @@ export function PromptBoxInternal({
           auxclick: (_view, event) => {
             return suppressPromptEditorAnchorActivation(event);
           },
+          focus: () => {
+            onCommandEditorFocusRef.current?.();
+            return false;
+          },
           blur: () => {
             triggerKeyRef.current = "";
             if (dismissedTriggerRef.current) {
@@ -2084,6 +2177,10 @@ export function PromptBoxInternal({
     if (fromHeight === null || !formElement) return;
     heightAnimationFromRef.current = null;
     if (getMediaQuerySnapshot(REDUCED_MOTION_QUERY)) return;
+    // Phones keep this tween on purpose. Snapping the expansion (measured
+    // on iPhone) left WebKit's native caret at the position computed at
+    // focus time, one line above the editor; the per-frame layouts of the
+    // tween are what make iOS refresh the caret rect.
 
     const previousTransition = formElement.style.transition;
     const previousWillChange = formElement.style.willChange;
@@ -2661,9 +2758,13 @@ export function PromptBoxInternal({
     setVoiceActionTransition("exiting");
     voice?.cancel();
   }, [voice]);
-  const effectiveSubmitTitle = isZenMode
+  const actionSubmitTitle = isZenMode
     ? submitTitle.replace(/^Submit\s+/, "")
     : submitTitle;
+  const effectiveSubmitTitle =
+    !canSubmit && submitDisabledReason
+      ? submitDisabledReason
+      : actionSubmitTitle;
 
   const emitAttachmentFiles = useCallback(
     (files: File[]) => {
@@ -3197,7 +3298,7 @@ export function PromptBoxInternal({
             <div
               data-promptbox-expanded-only=""
               inert={showVoiceActionGroup ? true : undefined}
-              className={cn("pl-4 pr-14 pt-3", compact && "pr-14")}
+              className="pl-4 pr-14 pt-3"
             >
               {header}
             </div>
@@ -3267,7 +3368,6 @@ export function PromptBoxInternal({
               scrollContainerRef={editorScrollContainerRef}
               inputLocked={composerInputLocked}
               isZenMode={isZenMode}
-              hasCompactControls={compact !== undefined}
               isCompactLayout={showCompactLayout}
               minHeight={minHeight}
               layout={zenModeLayout}
@@ -3334,7 +3434,7 @@ export function PromptBoxInternal({
             <div
               data-promptbox-action-row=""
               className={cn(
-                "relative flex shrink-0 flex-row items-center gap-3 pb-2 pl-3.5 pr-2 pt-1.5",
+                "relative flex shrink-0 select-none flex-row items-center gap-3 pb-2 pl-3.5 pr-2 pt-1.5",
                 showCompactLayout && "absolute inset-y-0 right-2 gap-0 p-0",
               )}
             >
@@ -3475,15 +3575,8 @@ export function PromptBoxInternal({
                         <Icon name="Mic" className="size-4" />
                       </Button>
                     ) : (
-                      <Button
-                        data-promptbox-submit-action=""
-                        type="submit"
-                        size={showCompactLayout ? "icon" : "sm"}
-                        variant="default"
-                        aria-label={effectiveSubmitTitle}
-                        disabled={!canSubmit}
-                        onPointerDown={handleSubmitPointerDown}
-                        onClick={handleSubmitClick}
+                      <PromptSubmitButton
+                        canSubmit={canSubmit}
                         className={cn(
                           showCompactLayout
                             ? COMPACT_PROMPT_ACTION_BUTTON_CLASS
@@ -3497,18 +3590,16 @@ export function PromptBoxInternal({
                           // stays pinned while the prompt height animates.
                           "transition-colors",
                         )}
-                      >
-                        {isSubmitting ? (
-                          <Icon
-                            name="Spinner"
-                            className="size-4 animate-spin"
-                          />
-                        ) : isZenMode ? (
-                          <Icon name="ArrowUp" className="size-4" />
-                        ) : (
-                          <Icon name="CornerDownLeft" className="size-4" />
-                        )}
-                      </Button>
+                        disabledReason={
+                          !canSubmit ? submitDisabledReason : undefined
+                        }
+                        isCompact={showCompactLayout}
+                        isSubmitting={isSubmitting}
+                        isZenMode={isZenMode}
+                        onPointerDown={handleSubmitPointerDown}
+                        onClick={handleSubmitClick}
+                        title={effectiveSubmitTitle}
+                      />
                     )}
                   </div>
                 </ComposerActionsSlot>
