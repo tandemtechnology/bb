@@ -1,5 +1,6 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
 import { Pill } from "@bb/shared-ui/pill";
+import { usePluginCss } from "@/lib/plugin-css";
 import {
   PluginContext,
   PluginSlotOwnershipContext,
@@ -51,7 +52,7 @@ function releaseSlotInstanceOwnedState(instanceKey: string): void {
   for (const release of releases) release();
 }
 
-export function pluginSlotInstanceKey(
+function pluginSlotInstanceKey(
   pluginId: string,
   slotKind: string,
   slotId: string,
@@ -182,7 +183,7 @@ class PluginSlotBoundary extends Component<
   }
 }
 
-export interface PluginSlotMountProps {
+interface PluginSlotMountProps {
   pluginId: string;
   /** e.g. "homepageSection", "navPanel" — combined with slotId per instance. */
   slotKind: string;
@@ -223,6 +224,7 @@ export function PluginSlotMount({
   instanceId,
   onCrash,
 }: PluginSlotMountProps) {
+  usePluginCss(pluginId);
   return (
     <PluginContext.Provider value={pluginId}>
       <PluginSlotBoundary

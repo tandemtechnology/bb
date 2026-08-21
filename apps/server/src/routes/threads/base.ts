@@ -420,7 +420,6 @@ export function registerThreadBaseRoutes(app: Hono, deps: AppDeps): void {
     ) {
       await handleThreadOwnershipChange(deps, {
         previousThread: thread,
-        queueParentMessages: true,
         updatedThread: updated,
       });
     }

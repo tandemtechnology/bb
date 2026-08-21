@@ -15,6 +15,7 @@ import type {
   PromptHistoryResponse,
   PromptHistoryQuery,
   ReorderProjectRequest,
+  SidebarBootstrapResponse,
   UpdateProjectRequest,
   UpdateProjectSourceRequest,
   UploadedPromptAttachment,
@@ -98,6 +99,10 @@ export interface ProjectBranchesArgs extends ProjectBranchesQuery {
 
 export interface ProjectDefaultExecutionOptionsArgs {
   projectId: string;
+  signal?: AbortSignal;
+}
+
+export interface ProjectSidebarBootstrapArgs {
   signal?: AbortSignal;
 }
 
@@ -186,6 +191,7 @@ export type ProjectListResult =
 export type ProjectPathsResult = WorkspacePathListResponse;
 export type ProjectPromptHistoryResult = PromptHistoryResponse;
 export type ProjectReorderResult = ProjectResponse[];
+export type ProjectSidebarBootstrapResult = SidebarBootstrapResponse;
 export type ProjectSourceAddResult = ProjectSource;
 export type ProjectSourceDeleteResult = { ok: true };
 export type ProjectSourceUpdateResult = ProjectSource;
@@ -250,6 +256,14 @@ export interface ProjectsArea {
   ): Promise<ProjectPromptHistoryResult>;
   env: ProjectEnvArea;
   reorder(args: ProjectReorderArgs): Promise<ProjectReorderResult>;
+  /**
+   * One round-trip navigation snapshot: thread sections, every project with
+   * its live threads and resolved thread-creation defaults, and the personal
+   * project. Backs the sidebar of the web and native apps.
+   */
+  sidebarBootstrap(
+    args?: ProjectSidebarBootstrapArgs,
+  ): Promise<ProjectSidebarBootstrapResult>;
   sources: ProjectSourcesArea;
   update(args: ProjectUpdateArgs): Promise<ProjectUpdateResult>;
 }
@@ -392,9 +406,15 @@ export function createProjectsArea(args: CreateSdkAreaArgs): ProjectsArea {
       const filename = resolveAttachmentFilename(input);
       const mimeType =
         input.mimeType ?? embeddedAttachmentMimeType(input.clientFile) ?? "";
-      const file = new Blob([await attachmentBytes(input.clientFile)], {
-        type: mimeType,
-      });
+      // A Blob/File whose type already matches streams straight into the
+      // form; copying it through arrayBuffer() first doubles the memory of a
+      // multi-megabyte photo on the main thread for nothing.
+      const file =
+        input.clientFile instanceof Blob && input.clientFile.type === mimeType
+          ? input.clientFile
+          : new Blob([await attachmentBytes(input.clientFile)], {
+              type: mimeType,
+            });
       const form = new FormData();
       form.set("file", file, filename);
       const baseUrl = transport.baseUrl.replace(/\/$/u, "");
@@ -609,6 +629,14 @@ export function createProjectsArea(args: CreateSdkAreaArgs): ProjectsArea {
             nextProjectId: input.nextProjectId,
           },
         }),
+      );
+    },
+    async sidebarBootstrap(input = {}) {
+      return transport.readJson(
+        transport.api.v1["sidebar-bootstrap"].$get(
+          {},
+          ...signalRequestArgs(input.signal),
+        ),
       );
     },
     sources,

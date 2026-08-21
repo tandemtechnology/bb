@@ -10,8 +10,8 @@ import {
   type BbPluginApi,
   type PluginCliContext,
   type PluginCliResult,
-} from "@bb/plugin-sdk";
-import type { NewThreadRequest } from "@bb/plugin-sdk/app";
+} from "@get-bb/plugin-sdk";
+import type { NewThreadRequest } from "@get-bb/plugin-sdk/app";
 import type BetterSqlite3 from "better-sqlite3";
 import { z } from "zod";
 import { migrateLegacyThreadGroups } from "./migration";

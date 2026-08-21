@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { NewThreadRequest } from "@bb/plugin-sdk/app";
+import type { NewThreadRequest } from "@get-bb/plugin-sdk/app";
 import {
   createFakePluginHost,
   makeThreadResponse,
-} from "@bb/plugin-sdk/testing";
+} from "@get-bb/plugin-sdk/testing";
 import plugin from "./server.ts";
 
 const request: NewThreadRequest = {

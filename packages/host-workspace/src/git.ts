@@ -36,21 +36,28 @@ interface ResolveGitProcessEnvArgs {
   env: NodeJS.ProcessEnv | undefined;
 }
 
-export interface GitTimeoutOptions {
+interface GitTimeoutOptions {
   timeoutMs?: number;
 }
 
-export interface FetchRemoteBranchesResult {
+interface FetchRemoteBranchesResult {
   status: "fetched" | "failed" | "skipped";
 }
 
-export interface DefaultBranchRefs {
+interface DefaultBranchRefs {
   defaultBranch: string | undefined;
   defaultBranchRelation: DefaultBranchRelation | undefined;
   originDefaultBranch: string | undefined;
 }
 
-export interface RunShellPipelineOptions extends GitTimeoutOptions {
+interface BranchRefsWithDefaults {
+  branches: string[];
+  defaultBranch: string | undefined;
+  originDefaultBranch: string | undefined;
+  remoteBranches: string[];
+}
+
+interface RunShellPipelineOptions extends GitTimeoutOptions {
   cwd: string;
   allowFailure?: boolean;
   signal?: AbortSignal;
@@ -71,18 +78,12 @@ export interface GitNullRecordLimitResult extends GitCommandResult {
   recordLimitReached: boolean;
 }
 
-type BranchStatus = {
-  branchName?: string;
-  aheadCount: number;
-  behindCount: number;
-};
-
 type ActiveWorkspaceGitOperationKind = Exclude<
   WorkspaceGitOperation["kind"],
   "none" | "unknown"
 >;
 
-export interface PorcelainEntry {
+interface PorcelainEntry {
   path: string;
   status: string;
   indexStatus: string;
@@ -587,23 +588,69 @@ async function findWorkspaceGitOperationMarker(
   return undefined;
 }
 
+export type GitRepoKind = "work-tree" | "bare" | "none";
+
+/**
+ * Classifies `cwd` as inside a work tree, at or inside a bare repository, or
+ * not a git repository at all. A bare repository includes the "bare clone +
+ * sibling worktrees" layout where `<root>/.git` is a gitdir file pointing at
+ * `<root>/.bare`: git answers `--is-inside-work-tree` with `false` (exit 0)
+ * there, so that flag alone cannot tell it apart from a plain directory.
+ */
+export async function detectGitRepoKind(
+  cwd: string,
+  options: GitTimeoutOptions = {},
+): Promise<GitRepoKind> {
+  const result = await runGit(
+    ["rev-parse", "--is-inside-work-tree", "--is-bare-repository"],
+    { cwd, allowFailure: true, timeoutMs: options.timeoutMs },
+  );
+  if (result.exitCode !== 0) {
+    return "none";
+  }
+  const [insideWorkTree, bare] = trimOutput(result.stdout).split("\n");
+  if (insideWorkTree === "true") {
+    return "work-tree";
+  }
+  if (bare === "true") {
+    return "bare";
+  }
+  return "none";
+}
+
+/**
+ * True when `cwd` is inside a git work tree, which is what a workspace needs
+ * for status, diffs, commits, and checkouts. A bare repository root is not a
+ * work tree; use {@link detectGitSource} for worktree-source semantics.
+ */
 export async function detectGitRepo(
   cwd: string,
   options: GitTimeoutOptions = {},
 ): Promise<boolean> {
-  const result = await runGit(["rev-parse", "--is-inside-work-tree"], {
-    cwd,
-    allowFailure: true,
-    timeoutMs: options.timeoutMs,
-  });
-  return result.exitCode === 0 && trimOutput(result.stdout) === "true";
+  return (await detectGitRepoKind(cwd, options)) === "work-tree";
 }
 
+/**
+ * True when `cwd` is a git repository that can serve as the source of a
+ * worktree or a branch listing: a checkout or a bare repository.
+ */
+export async function detectGitSource(
+  cwd: string,
+  options: GitTimeoutOptions = {},
+): Promise<boolean> {
+  return (await detectGitRepoKind(cwd, options)) !== "none";
+}
+
+/**
+ * Throws `not_git_repo` unless `cwd` is a git repository (checkout or bare).
+ * Callers that need a work tree, such as `git status`, get git's own
+ * "must be run in a work tree" failure on a bare path.
+ */
 export async function ensureGitRepo(
   cwd: string,
   options: GitTimeoutOptions = {},
 ): Promise<void> {
-  if (await detectGitRepo(cwd, options)) {
+  if (await detectGitSource(cwd, options)) {
     return;
   }
 
@@ -613,13 +660,13 @@ export async function ensureGitRepo(
   );
 }
 
-export type GitRepositoryState = "not_git" | "no_commits" | "has_commits";
+type GitRepositoryState = "not_git" | "no_commits" | "has_commits";
 
 export async function readGitRepositoryState(
   cwd: string,
   options: GitTimeoutOptions = {},
 ): Promise<GitRepositoryState> {
-  if (!(await detectGitRepo(cwd, options))) {
+  if (!(await detectGitSource(cwd, options))) {
     return "not_git";
   }
   const result = await runGit(["rev-list", "--all", "--max-count=1"], {
@@ -671,7 +718,7 @@ export async function getCheckoutRef(
   cwd: string,
   options: GitTimeoutOptions = {},
 ): Promise<GitCheckoutRef> {
-  if (!(await detectGitRepo(cwd, options))) {
+  if (!(await detectGitSource(cwd, options))) {
     return { kind: "unknown", reason: "Path is not a git repository" };
   }
 
@@ -699,23 +746,6 @@ export async function getCheckoutRef(
   return {
     kind: "unknown",
     reason: "HEAD is not symbolic and no commit is checked out",
-  };
-}
-
-export function parseBranchStatus(line: string | undefined): BranchStatus {
-  const cleaned = line?.trim() ?? "";
-  if (!cleaned.startsWith("##")) {
-    return { aheadCount: 0, behindCount: 0 };
-  }
-
-  const branchMatch = cleaned.match(/^##\s+([^.\s]+)(?:\.\.\.[^\s]+)?/u);
-  const aheadMatch = cleaned.match(/ahead (\d+)/u);
-  const behindMatch = cleaned.match(/behind (\d+)/u);
-
-  return {
-    branchName: branchMatch?.[1],
-    aheadCount: aheadMatch ? Number.parseInt(aheadMatch[1], 10) : 0,
-    behindCount: behindMatch ? Number.parseInt(behindMatch[1], 10) : 0,
   };
 }
 
@@ -887,7 +917,7 @@ export async function getWorkspaceGitOperation(
   return buildActiveWorkspaceGitOperation(marker.kind, hasConflicts);
 }
 
-export interface NameStatusEntry {
+interface NameStatusEntry {
   path: string;
   /** Raw status letter from `git diff --name-status` (M, A, D, R, C, T, U). */
   status: string;
@@ -1033,7 +1063,7 @@ export function parseNumstatEntriesZ(output: string): NumstatEntry[] {
   return entries;
 }
 
-export function parseNumstatCount(text: string): number | null {
+function parseNumstatCount(text: string): number | null {
   const value = Number.parseInt(text, 10);
   return Number.isFinite(value) ? value : null;
 }
@@ -1326,7 +1356,7 @@ export async function revParse(cwd: string, ref: string): Promise<string> {
   return trimOutput(result.stdout);
 }
 
-export interface ReadGitBlobResult {
+interface ReadGitBlobResult {
   /** Object bytes, or `null` if no blob exists at `<ref>:<relativePath>`. */
   contents: Buffer | null;
   /** Git blob byte size; equals `contents.byteLength`, or 0 when missing. */
@@ -1338,7 +1368,7 @@ export interface ReadGitBlobResult {
  * `undefined` only when git reports the ref/path/object target is absent.
  * Non-blob objects and other git failures surface as `git_command_failed`.
  */
-export async function gitBlobSize(
+async function gitBlobSize(
   cwd: string,
   ref: string,
   relativePath: string,
@@ -1463,6 +1493,34 @@ export async function listRemoteBranches(cwd: string): Promise<string[]> {
     })
     .filter((ref) => ref.branch.length > 0 && ref.symref.length === 0)
     .map((ref) => ref.branch);
+}
+
+export async function listBranchRefsWithDefaults(
+  cwd: string,
+): Promise<BranchRefsWithDefaults> {
+  const [branches, remoteBranches, originHeadBranch] = await Promise.all([
+    listBranches(cwd),
+    listRemoteBranches(cwd),
+    readOriginHeadBranchName(cwd),
+  ]);
+  const defaultBranch = resolvePreferredLocalDefaultBranch(
+    branches,
+    originHeadBranch,
+  );
+  const originDefaultBranch = [
+    originHeadBranch ? `origin/${originHeadBranch}` : undefined,
+    defaultBranch ? `origin/${defaultBranch}` : undefined,
+  ].find(
+    (branch): branch is string =>
+      branch !== undefined && remoteBranches.includes(branch),
+  );
+
+  return {
+    branches,
+    defaultBranch,
+    originDefaultBranch,
+    remoteBranches,
+  };
 }
 
 export async function hasUncommittedChanges(cwd: string): Promise<boolean> {
