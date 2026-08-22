@@ -39,7 +39,10 @@ import {
   requirePublicProject,
   requirePublicThread,
 } from "../../services/lib/entity-lookup.js";
-import { dispatchThreadRenameCommand } from "../../services/threads/thread-commands.js";
+import {
+  buildThreadTitleRegenerationInput,
+  dispatchThreadTitleRenameIfReady,
+} from "../../services/threads/thread-title-refinement.js";
 import {
   finalizeStoppedThread,
   requestActiveRuntimeThreadStopIfNeeded,
@@ -56,9 +59,6 @@ import { generateThreadMetadataWithOutcome } from "../../services/threads/title-
 import { handleThreadOwnershipChange } from "../../services/threads/thread-ownership.js";
 import { applyThreadExecutionOverride } from "../../services/threads/thread-execution-override.js";
 import { emitPluginThreadDeleted } from "../../services/plugins/plugin-thread-events.js";
-import { listAcceptedThreadPromptHistory } from "../../services/prompt-history.js";
-
-const TITLE_REGENERATION_HISTORY_LIMIT = 8;
 
 function parseThreadIncludes(query: ThreadGetQuery): Set<ThreadIncludeOption> {
   const includes = new Set<ThreadIncludeOption>();
@@ -207,25 +207,6 @@ function buildThreadSearchResponse(
     active: buildThreadSearchGroupResponse(deps, { group: args.active }),
     archived: buildThreadSearchGroupResponse(deps, { group: args.archived }),
   };
-}
-
-function dispatchThreadTitleRenameIfReady(
-  deps: AppDeps,
-  thread: Thread,
-  title: string,
-): void {
-  if (!thread.environmentId) return;
-  const environment = requireEnvironment(deps.db, thread.environmentId);
-  if (environment.status !== "ready" || !environment.path) return;
-  dispatchThreadRenameCommand(deps, {
-    environment: {
-      id: environment.id,
-      hostId: environment.hostId,
-    },
-    providerId: thread.providerId,
-    threadId: thread.id,
-    title,
-  });
 }
 
 export function registerThreadBaseRoutes(app: Hono, deps: AppDeps): void {
@@ -388,6 +369,9 @@ export function registerThreadBaseRoutes(app: Hono, deps: AppDeps): void {
     const metadataUpdate: UpdateThreadInput = {};
     if ("title" in payload) {
       metadataUpdate.title = payload.title;
+      // A user-set title is sticky; clearing it (null) reopens the thread to
+      // automatic naming again.
+      metadataUpdate.titleSource = payload.title ? "manual" : null;
     }
     const sectionId = payload.sectionId;
     if (sectionId !== undefined) {
@@ -430,16 +414,7 @@ export function registerThreadBaseRoutes(app: Hono, deps: AppDeps): void {
   post(routes.regenerateTitle, async (context) => {
     const thread = requirePublicThread(deps.db, context.req.param("id"));
     const fallback = thread.titleFallback?.trim();
-    const acceptedHistory = listAcceptedThreadPromptHistory(deps, {
-      threadId: thread.id,
-      limit: TITLE_REGENERATION_HISTORY_LIMIT,
-    });
-    const input = [
-      ...(fallback
-        ? [{ type: "text" as const, text: fallback, mentions: [] }]
-        : []),
-      ...[...acceptedHistory].reverse().flatMap((entry) => entry.input),
-    ];
+    const input = buildThreadTitleRegenerationInput(deps, thread);
     if (input.length === 0) {
       throw new ApiError(
         409,
@@ -468,7 +443,12 @@ export function registerThreadBaseRoutes(app: Hono, deps: AppDeps): void {
       );
     }
 
-    const updated = updateThread(deps.db, deps.hub, thread.id, { title });
+    const updated = updateThread(deps.db, deps.hub, thread.id, {
+      title,
+      // A user-invoked regeneration is a deliberate choice; keep it sticky so
+      // the automatic post-turn pass never overwrites it.
+      titleSource: "manual",
+    });
     if (!updated) {
       throw new ApiError(404, "thread_not_found", "Thread not found");
     }

@@ -75,6 +75,7 @@ function createRuntimeConfig(): ServerRuntimeConfig {
     isDevelopment: false,
     managedEnvironmentRetireGraceMs: 5 * 60_000,
     openAiApiKey: "ambient-openai-key",
+    refineThreadTitles: false,
     serverPort: 38886,
     sharedSkillRoots: { user: [], project: [] },
     transcriptionModel: "openai/gpt-4o-transcribe",

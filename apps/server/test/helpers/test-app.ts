@@ -179,6 +179,9 @@ export async function createTestAppHarness(
     isDevelopment: true,
     managedEnvironmentRetireGraceMs: MANAGED_ENVIRONMENT_RETIRE_GRACE_MS,
     openAiApiKey: "test-openai-key",
+    // Default fixtures keep legacy creation-time naming; tests exercising the
+    // post-turn refinement opt in via configOverrides.
+    refineThreadTitles: false,
     serverPort: 3334,
     sharedSkillRoots: { user: [], project: [] },
     transcriptionModel: "test/mock-transcription",

@@ -44,6 +44,14 @@ export interface ServerRuntimeConfig {
   /** Manifest URL of the reserved `bb-community` plugin marketplace. */
   marketplaceUrl: string;
   openAiApiKey: string;
+  /**
+   * When true, name threads from the first *turn*: local threads skip the
+   * first-message title and every thread (re)generates its title from the
+   * prompt plus the agent's first response once that turn completes. A manual
+   * rename always wins. When false, threads are named from the first message at
+   * creation (legacy behavior).
+   */
+  refineThreadTitles: boolean;
   serverPort: number;
   sharedSkillRoots: ProviderNativeSkillRoots;
   transcriptionModel: string;

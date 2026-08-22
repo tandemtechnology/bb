@@ -321,6 +321,7 @@ function dropRewindAddedTables(db: DbConnection): void {
   dropHostMaxPermissionModeColumn(db);
   dropEnvironmentRetireRequestedAtColumn(db);
   dropPluginArtifactGitCheckoutRootColumn(db);
+  dropThreadTitleSourceColumn(db);
   dropThreadSectionSchema(db);
   restoreWideExperimentsTable(db);
   // system_experiments predates thread search, so the table itself isn't
@@ -749,6 +750,18 @@ function dropEnvironmentRetireRequestedAtColumn(db: DbConnection): void {
   }
 }
 
+// Fork migration 9001 adds threads.title_source. Rewind scenarios that clear
+// its journal row must remove the column before replaying the ADD, since SQLite
+// ALTER TABLE ADD COLUMN is not re-appliable.
+function dropThreadTitleSourceColumn(db: DbConnection): void {
+  const columns = db.$client
+    .prepare<[], TableInfoRow>("PRAGMA table_info(threads)")
+    .all();
+  if (columns.some((column) => column.name === "title_source")) {
+    db.$client.prepare("ALTER TABLE threads DROP COLUMN title_source").run();
+  }
+}
+
 /**
  * cleanup_mode existed since the baseline and is dropped by 0033, so a forward
  * replay from before 0033 must first restore it for 0033's DROP COLUMN to apply
@@ -807,6 +820,7 @@ function dropPost0023Tables(db: DbConnection): void {
   dropEventParentToolCallIdColumn(db);
   dropEnvironmentRetireRequestedAtColumn(db);
   dropPluginArtifactGitCheckoutRootColumn(db);
+  dropThreadTitleSourceColumn(db);
   dropProjectGitRemoteUrlColumn(db);
   db.$client.prepare("DROP TABLE IF EXISTS thread_tabs").run();
   db.$client.exec(`
@@ -2014,6 +2028,7 @@ describe("migrate", () => {
       dropHostMaxPermissionModeColumn(db);
       dropEnvironmentRetireRequestedAtColumn(db);
       dropPluginArtifactGitCheckoutRootColumn(db);
+      dropThreadTitleSourceColumn(db);
       dropMarketplaceCatalogSchema(db);
       dropEventParentToolCallIdColumn(db);
 
@@ -2418,6 +2433,7 @@ describe("migrate", () => {
       dropHostMaxPermissionModeColumn(db);
       dropEnvironmentRetireRequestedAtColumn(db);
       dropPluginArtifactGitCheckoutRootColumn(db);
+      dropThreadTitleSourceColumn(db);
       dropMarketplaceCatalogSchema(db);
       dropEventParentToolCallIdColumn(db);
 
@@ -2519,6 +2535,7 @@ describe("migrate", () => {
       dropHostMaxPermissionModeColumn(db);
       dropEnvironmentRetireRequestedAtColumn(db);
       dropPluginArtifactGitCheckoutRootColumn(db);
+      dropThreadTitleSourceColumn(db);
       dropMarketplaceCatalogSchema(db);
       dropEventParentToolCallIdColumn(db);
 
@@ -5110,6 +5127,9 @@ describe("migrate", () => {
       });
 
       dropEventParentToolCallIdColumn(db);
+      // The fork migration 9001 (later than every upstream migration) re-adds
+      // title_source on replay; drop it first so the ALTER does not collide.
+      dropThreadTitleSourceColumn(db);
       db.$client
         .prepare<DeleteMigrationParameters>(
           "DELETE FROM __drizzle_migrations WHERE created_at >= ?",

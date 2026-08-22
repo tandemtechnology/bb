@@ -434,7 +434,11 @@ async function resolveMetadataIfNeeded(
   const needsBranch =
     args.context.request.environmentIntent.type === "direct-managed";
   if (!needsBranch) {
-    if (!args.context.request.titleProvided) {
+    // With post-turn refinement on, a branch-less (local/reuse/personal) thread
+    // is named only after its first turn completes, so skip creation-time
+    // naming here and leave the fallback showing until then. Managed threads
+    // still generate below because the branch slug is derived from the title.
+    if (!args.context.request.titleProvided && !deps.config.refineThreadTitles) {
       void inferThreadMetadata(deps, {
         environmentId: null,
         generateBranchName: false,

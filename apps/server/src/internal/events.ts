@@ -40,6 +40,7 @@ import {
 import { queueChildThreadTurnNotificationBestEffort } from "../services/threads/child-thread-notifications.js";
 import { isParentNotifiableChildThread } from "../services/threads/thread-parent.js";
 import { runQueuedMessageAutoSendForThread } from "../services/threads/queued-messages.js";
+import { regenerateThreadTitleAfterTurn } from "../services/threads/thread-title-refinement.js";
 import { deferAfterResponse } from "../services/lib/response-deferral.js";
 import {
   isCommandTimeoutError,
@@ -194,9 +195,15 @@ interface QueuedMessageAutoSendFollowUp {
   threadId: string;
 }
 
+interface RegenerateTitleFollowUp {
+  kind: "regenerate-title";
+  threadId: string;
+}
+
 type EventEffectFollowUp =
   | ParentTurnNotificationFollowUp
-  | QueuedMessageAutoSendFollowUp;
+  | QueuedMessageAutoSendFollowUp
+  | RegenerateTitleFollowUp;
 
 function isRootTurnStartedEvent(
   event: Extract<HostDaemonEventEnvelope["event"], { type: "turn/started" }>,
@@ -460,6 +467,20 @@ async function applyEventEffects(
             threadId: entry.threadId,
           });
         }
+        // Post-turn naming: after a top-level agent turn completes, (re)name the
+        // thread from the prompt plus the agent's response. The service is
+        // idempotent (acts only while the title is still automatic), so pushing
+        // on every root completion is safe; it settles after the first turn.
+        if (
+          deps.config.refineThreadTitles &&
+          event.status === "completed" &&
+          turnCompleted.isRootTurnCompletion
+        ) {
+          followUps.push({
+            kind: "regenerate-title",
+            threadId: entry.threadId,
+          });
+        }
         continue;
       }
 
@@ -523,6 +544,11 @@ async function executeEventFollowUpBestEffort(
         return;
       case "queued-message-auto-send":
         await runQueuedMessageAutoSendForThread(deps, {
+          threadId: followUp.threadId,
+        });
+        return;
+      case "regenerate-title":
+        await regenerateThreadTitleAfterTurn(deps, {
           threadId: followUp.threadId,
         });
         return;

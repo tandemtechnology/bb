@@ -244,6 +244,13 @@ export const BB_TRANSCRIPTION_ENV = defineEnvVar<string>({
   parse: parseTranscriptionModelValue,
 });
 
+export const BB_THREAD_TITLE_REFINE_ENV = defineEnvVar<boolean>({
+  description:
+    "Auto-name threads from the first turn: skip the first-message title on local threads and (re)generate the title from the prompt plus the agent's first response once the first turn completes. A manual rename is never overwritten. Set to false to name threads from the first message at creation instead.",
+  name: "BB_THREAD_TITLE_REFINE",
+  parse: parseBooleanEnvValue,
+});
+
 export const OPENAI_API_KEY_ENV = defineEnvVar<string>({
   description:
     "OpenAI API key used when an explicit OpenAI provider route is configured",
@@ -396,6 +403,7 @@ export const DEFAULT_BB_MARKETPLACE_URL =
 export const DEFAULT_BB_INFERENCE = DEFAULTS.inferenceModel;
 export const DEFAULT_BB_INFERENCE_FALLBACK = DEFAULTS.inferenceFallbackModel;
 export const DEFAULT_BB_TRANSCRIPTION = DEFAULTS.transcriptionModel;
+export const DEFAULT_BB_THREAD_TITLE_REFINE = true;
 export const DEFAULT_BB_FF_PLACEHOLDER = defaultFeatureFlags.placeholder;
 export const DEFAULT_BB_FF_TIMELINE_WINDOW_EVENT_BUDGET =
   defaultFeatureFlags.timelineWindowEventBudget;
