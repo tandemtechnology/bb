@@ -204,6 +204,9 @@ export function applyGeneratedThreadTitle(
 
   updateThread(deps.db, deps.hub, args.threadId, {
     title,
+    // Creation-time title: a provisional name the post-first-turn pass may
+    // replace once the agent's response provides better context.
+    titleSource: "provisional",
   });
 
   return true;

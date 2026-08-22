@@ -596,6 +596,14 @@ export const threads = sqliteTable(
     ).$type<ReasoningLevel>(),
     title: text("title"),
     titleFallback: text("title_fallback"),
+    // Provenance of the current `title`, used to drive automatic naming:
+    // `provisional` = a creation-time model title (managed threads, drives the
+    // branch slug) that the post-first-turn pass may replace; `refined` = named
+    // from the first turn's prompt + agent response (final auto name); `manual`
+    // = user-set (never overwritten). null = no title yet (fallback shown).
+    titleSource: text("title_source").$type<
+      "provisional" | "refined" | "manual"
+    >(),
     sectionId: text("section_id").references(() => threadSections.id, {
       onDelete: "set null",
     }),

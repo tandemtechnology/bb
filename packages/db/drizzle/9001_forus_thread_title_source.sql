@@ -1,0 +1,1 @@
+ALTER TABLE `threads` ADD `title_source` text;

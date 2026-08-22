@@ -210,6 +210,7 @@ function createThreadListEntry(
 ): ThreadWithPendingInteractionState {
   return {
     ...args.thread,
+    titleSource: null,
     modelOverride: null,
     reasoningLevelOverride: null,
     environmentBranchName: null,

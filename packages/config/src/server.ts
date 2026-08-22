@@ -25,6 +25,7 @@ import {
   BB_SERVER_BIND_HOST_ENV,
   BB_SERVER_LAUNCH_ID_ENV,
   BB_TELEMETRY_ENV,
+  BB_THREAD_TITLE_REFINE_ENV,
   BB_TRANSCRIPTION_ENV,
   DEFAULT_BB_APP_URL,
   DEFAULT_BB_APP_SURFACE,
@@ -36,6 +37,7 @@ import {
   DEFAULT_BB_POSTHOG_API_KEY,
   DEFAULT_BB_SERVER_BIND_HOST,
   DEFAULT_BB_TELEMETRY,
+  DEFAULT_BB_THREAD_TITLE_REFINE,
   DEFAULT_BB_TRANSCRIPTION,
   DEFAULT_OPENAI_API_KEY,
   OPENAI_API_KEY_ENV,
@@ -67,6 +69,7 @@ export interface ServerConfig
    */
   BB_SERVER_LAUNCH_ID?: string;
   BB_TELEMETRY: boolean;
+  BB_THREAD_TITLE_REFINE: boolean;
   BB_TRANSCRIPTION: string;
   OPENAI_API_KEY: string;
   featureFlags: FeatureFlags;
@@ -179,6 +182,12 @@ export function loadServerConfig(
       context: loader.context,
       defaultValue: DEFAULT_BB_TELEMETRY,
       definition: BB_TELEMETRY_ENV,
+      env: loader.env,
+    }),
+    BB_THREAD_TITLE_REFINE: readEnvVarWithDefault({
+      context: loader.context,
+      defaultValue: DEFAULT_BB_THREAD_TITLE_REFINE,
+      definition: BB_THREAD_TITLE_REFINE_ENV,
       env: loader.env,
     }),
     BB_TRANSCRIPTION: readEnvVarWithDefault({

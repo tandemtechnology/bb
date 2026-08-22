@@ -268,6 +268,7 @@ export interface CreateThreadInput {
   providerId: string;
   title?: string | null;
   titleFallback?: string | null;
+  titleSource?: "provisional" | "refined" | "manual" | null;
   sectionId?: string | null;
   status?: ThreadStatus;
   parentThreadId?: string | null;
@@ -298,6 +299,7 @@ export function createThread(
           providerId: input.providerId,
           title: input.title ?? null,
           titleFallback: input.titleFallback ?? null,
+          titleSource: input.titleSource ?? null,
           sectionId: input.sectionId ?? null,
           status: input.status ?? "starting",
           parentThreadId:
@@ -1640,6 +1642,7 @@ export interface UpdateThreadInput {
   lastReadAt?: number | null;
   parentThreadId?: string | null;
   title?: string | null;
+  titleSource?: "provisional" | "refined" | "manual" | null;
   visibility?: ThreadVisibility;
 }
 
@@ -1680,6 +1683,7 @@ export function updateThread(
 
   const set: Partial<typeof threads.$inferInsert> = { updatedAt: now };
   if ("title" in input) set.title = input.title;
+  if ("titleSource" in input) set.titleSource = input.titleSource;
   if ("sectionId" in input) {
     set.sectionId = input.sectionId;
   }

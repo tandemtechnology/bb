@@ -173,6 +173,9 @@ export function createThreadRecord(
       environmentId: args.environmentId,
       providerId: args.request.providerId,
       title: args.request.title ?? null,
+      // An explicit title supplied at creation is user-authored, so it is
+      // sticky and never replaced by automatic naming.
+      titleSource: args.request.title ? "manual" : null,
       titleFallback: args.request.titleFallback,
       sectionId,
       parentThreadId: args.request.parentThreadId ?? null,
