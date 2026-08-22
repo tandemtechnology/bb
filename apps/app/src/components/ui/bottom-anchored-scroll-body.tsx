@@ -295,6 +295,10 @@ export function BottomAnchoredScrollBody({
   const pointerScrollIntentRef = useRef(false);
   const restoreFrameRef = useRef<number | null>(null);
   const restoreFramesRemainingRef = useRef(0);
+  // Animation-frame loop that drives a pending saved-row restore to resolution
+  // (see the mount restore effect). Separate from `restoreFrameRef`, which is
+  // owned by the bottom-restore settle tail.
+  const restorePumpFrameRef = useRef<number | null>(null);
   const pendingPrependAnchorRef = useRef<{
     scrollHeight: number;
     scrollTop: number;
@@ -337,6 +341,12 @@ export function BottomAnchoredScrollBody({
     window.cancelAnimationFrame(restoreFrameRef.current);
     restoreFrameRef.current = null;
     restoreFramesRemainingRef.current = 0;
+  }, []);
+
+  const cancelRestorePump = useCallback(() => {
+    if (restorePumpFrameRef.current === null) return;
+    window.cancelAnimationFrame(restorePumpFrameRef.current);
+    restorePumpFrameRef.current = null;
   }, []);
 
   // Snap scrollTop back to the bottom if anchoring has let us drift away.
@@ -724,7 +734,37 @@ export function BottomAnchoredScrollBody({
       lastAppliedScrollTop: null,
     };
     advancePendingScrollRestore();
-  }, [scrollAnchorThreadId, store, advancePendingScrollRestore]);
+
+    // Also drive the settle loop on animation frames, not only the
+    // ResizeObserver. The observer alone can strand the view at the top: if the
+    // saved row isn't in the freshly loaded window (returning refetches the
+    // latest window, which often omits a row scrolled to earlier) and the
+    // layout settles in fewer than SCROLL_ANCHOR_RESTORE_MAX_ATTEMPTS resize
+    // passes, the give-up path (fall back to bottom) never runs and scrollTop
+    // stays at 0. The frame loop guarantees the pending restore always resolves
+    // — to the saved row, or to the bottom — without depending on external
+    // resize events. It self-terminates once `advancePendingScrollRestore`
+    // clears the pending restore (row settled, user scrolled, or fell back).
+    const pumpRestore = () => {
+      restorePumpFrameRef.current = null;
+      if (!pendingScrollRestoreRef.current) return;
+      advancePendingScrollRestore();
+      if (pendingScrollRestoreRef.current) {
+        restorePumpFrameRef.current =
+          window.requestAnimationFrame(pumpRestore);
+      }
+    };
+    restorePumpFrameRef.current = window.requestAnimationFrame(pumpRestore);
+
+    return () => {
+      cancelRestorePump();
+    };
+  }, [
+    scrollAnchorThreadId,
+    store,
+    advancePendingScrollRestore,
+    cancelRestorePump,
+  ]);
 
   const bottomAnchorContextValue = useMemo<BottomAnchorContextValue>(
     () => ({

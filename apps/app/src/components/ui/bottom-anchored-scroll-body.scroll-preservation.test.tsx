@@ -472,6 +472,60 @@ describe("BottomAnchoredScrollBody scroll preservation", () => {
     expect(scrollArea.scrollTop).toBe(300);
   });
 
+  it("falls back to the bottom on animation frames when no resize fires", () => {
+    // Regression: the give-up-and-scroll-to-bottom path used to be driven only
+    // by the ResizeObserver. When the saved row isn't in the freshly loaded
+    // window and the layout settles without enough resize passes, that path
+    // never ran and the view stayed stranded at the top (scrollTop 0). The
+    // animation-frame pump must resolve the pending restore to the bottom on
+    // its own, with no ResizeObserver trigger at all.
+    const frameCallbacks = new Map<number, FrameRequestCallback>();
+    let nextFrameId = 1;
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      const id = nextFrameId;
+      nextFrameId += 1;
+      frameCallbacks.set(id, callback);
+      return id;
+    });
+    vi.stubGlobal("cancelAnimationFrame", (id: number) => {
+      frameCallbacks.delete(id);
+    });
+    const flushFrames = (maxRounds = 50) => {
+      let round = 0;
+      while (frameCallbacks.size > 0 && round < maxRounds) {
+        const pending = [...frameCallbacks.entries()];
+        frameCallbacks.clear();
+        for (const [, callback] of pending) callback(0);
+        round += 1;
+      }
+    };
+
+    getDefaultStore().set(threadTimelineScrollAnchorAtomFamily("thread-a"), {
+      rowId: "row-gone",
+      offsetWithinRow: 20,
+      atBottom: false,
+    });
+
+    // The saved row id is absent from the rendered rows, so restore can never
+    // anchor to it and must fall back to the bottom.
+    const { scrollArea } = renderTimeline({
+      threadId: "thread-a",
+      rowIds: ["row-a", "row-b"],
+    });
+    mockScrollAreaRect(scrollArea);
+    setScrollMetrics(scrollArea, {
+      scrollHeight: 400,
+      clientHeight: 100,
+      scrollTop: 0,
+    });
+
+    // No ResizeObserver trigger here on purpose: the frame pump is the only
+    // thing advancing the restore.
+    flushFrames();
+
+    expect(scrollArea.scrollTop).toBe(300);
+  });
+
   it("does not let a pending saved-row restore undo an explicit bottom scroll", () => {
     getDefaultStore().set(threadTimelineScrollAnchorAtomFamily("thread-a"), {
       rowId: "row-b",
